@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bot Performance Report</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:#0d0f14; --surface:#13161d; --surface2:#1a1e28; --border:#222736;
+  --accent:#00e5a0; --blue:#3b82f6; --red:#f43f5e; --yellow:#fbbf24;
+  --text:#e2e8f0; --muted:#4b5675; --mono:'IBM Plex Mono',monospace; --sans:'IBM Plex Sans',sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh}
+.wrap{max-width:1200px;margin:0 auto;padding:24px}
+header{display:flex;align-items:center;justify-content:space-between;padding-bottom:24px;border-bottom:1px solid var(--border);margin-bottom:28px}
+header h1{font-size:1.2rem;font-weight:700}
+header p{font-size:.7rem;color:var(--muted);font-family:var(--mono)}
+.days-btns{display:flex;gap:8px}
+.days-btns button{padding:6px 14px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-family:var(--mono);font-size:.72rem;cursor:pointer}
+.days-btns button.active{border-color:var(--accent);color:var(--accent)}
+
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px}
+.card .lbl{font-size:.62rem;font-family:var(--mono);color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px}
+.card .val{font-size:1.6rem;font-weight:700;letter-spacing:-1px}
+.card .sub{font-size:.68rem;color:var(--muted);margin-top:4px;font-family:var(--mono)}
+.green{color:var(--accent)} .red{color:var(--red)} .blue{color:var(--blue)} .yellow{color:var(--yellow)}
+
+.two{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
+.three{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:20px}
+.box{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.box-head{padding:14px 18px;border-bottom:1px solid var(--border);font-size:.85rem;font-weight:600}
+
+table{width:100%;border-collapse:collapse}
+th{text-align:left;padding:8px 18px;font-size:.6rem;font-family:var(--mono);color:var(--muted);letter-spacing:1.5px;text-transform:uppercase;border-bottom:1px solid var(--border)}
+td{padding:11px 18px;border-bottom:1px solid rgba(34,39,54,.4);font-size:.8rem}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:var(--surface2)}
+
+.badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:6px;font-family:var(--mono);font-size:.65rem;font-weight:600}
+.badge.ok{background:rgba(0,229,160,.12);color:var(--accent)}
+.badge.warn{background:rgba(251,191,36,.12);color:var(--yellow)}
+.badge.bad{background:rgba(244,63,94,.12);color:var(--red)}
+
+.go-live-box{border-radius:12px;padding:20px 24px;margin-bottom:20px;border:1px solid}
+.go-live-box.ready{background:rgba(0,229,160,.06);border-color:rgba(0,229,160,.3)}
+.go-live-box.not-ready{background:rgba(244,63,94,.06);border-color:rgba(244,63,94,.3)}
+.go-live-box h2{font-size:1.1rem;margin-bottom:10px}
+.check-row{display:flex;align-items:center;gap:10px;margin-bottom:6px;font-size:.82rem}
+.check-icon{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.7rem;flex-shrink:0}
+.check-icon.pass{background:rgba(0,229,160,.2);color:var(--accent)}
+.check-icon.fail{background:rgba(244,63,94,.2);color:var(--red)}
+
+.weekly-bar{display:flex;align-items:center;gap:10px;padding:6px 18px;border-bottom:1px solid rgba(34,39,54,.4);font-size:.78rem}
+.weekly-bar:last-child{border-bottom:none}
+.wk-label{min-width:140px;font-family:var(--mono);font-size:.7rem;color:var(--muted)}
+.wk-track{flex:1;height:8px;background:var(--border);border-radius:4px;overflow:hidden}
+.wk-fill{height:100%;border-radius:4px;transition:width .4s}
+.wk-val{min-width:70px;text-align:right;font-family:var(--mono);font-size:.72rem}
+
+.loading{text-align:center;padding:60px;color:var(--muted);font-family:var(--mono)}
+@media(max-width:800px){.cards{grid-template-columns:1fr 1fr}.two,.three{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div>
+    <h1>Performance Report</h1>
+    <p>FOREX AI BOT — DERIV MT5 | <a href="/" style="color:var(--accent)">Back to Dashboard</a></p>
+  </div>
+  <div class="days-btns">
+    <button onclick="load(7)"  id="d7">7 days</button>
+    <button onclick="load(14)" id="d14">14 days</button>
+    <button onclick="load(30)" id="d30" class="active">30 days</button>
+    <button onclick="load(90)" id="d90">90 days</button>
+  </div>
+</header>
+
+<div id="content"><div class="loading">Loading performance data...</div></div>
+
+</div>
+<script>
+let currentDays = 30;
+
+async function load(days) {
+  currentDays = days;
+  document.querySelectorAll('.days-btns button').forEach(b => b.classList.remove('active'));
+  document.getElementById('d'+days).classList.add('active');
+  document.getElementById('content').innerHTML = '<div class="loading">Loading...</div>';
+
+  try {
+    const r = await fetch(`/api/performance?days=${days}`);
+    const d = await r.json();
+    if (d.error && d.total_trades === 0) {
+      document.getElementById('content').innerHTML = `
+        <div class="loading" style="color:var(--yellow)">
+          No trades recorded yet.<br><br>
+          The bot needs to complete trades before this report populates.<br>
+          Keep the bot running on demo — check back after a few days.
+        </div>`;
+      return;
+    }
+    render(d);
+  } catch(e) {
+    document.getElementById('content').innerHTML = `
+      <div class="loading" style="color:var(--red)">
+        Cannot connect to server.<br>Make sure server.py is running.
+      </div>`;
+  }
+}
+
+function fmt(v) { return v >= 0 ? '+$'+v.toFixed(2) : '-$'+Math.abs(v).toFixed(2); }
+function pct(v, good, bad) {
+  const cls = v >= good ? 'green' : v >= bad ? 'yellow' : 'red';
+  return `<span class="${cls}">${v.toFixed(1)}%</span>`;
+}
+
+function render(d) {
+  const checks = d.go_live_checks || {};
+  const ready  = d.go_live_ready;
+
+  let html = '';
+
+  // ── GO LIVE BOX ──────────────────────────────────────────
+  html += `<div class="go-live-box ${ready ? 'ready' : 'not-ready'}">
+    <h2 style="color:${ready ? 'var(--accent)' : 'var(--red)'}">
+      ${ready ? '[READY] You can switch to a live account' : '[NOT READY] Keep running on demo'}
+    </h2>
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:12px">`;
+
+  const checkItems = [
+    {key:'win_rate_ok',      label:'Win Rate >55%',     val: d.win_rate?.toFixed(1)+'%'},
+    {key:'profit_factor_ok', label:'Profit Factor >1.5', val: d.profit_factor?.toFixed(2)},
+    {key:'drawdown_ok',      label:'Drawdown <$15',      val: '$'+Math.abs(d.max_drawdown||0).toFixed(2)},
+    {key:'sharpe_ok',        label:'Sharpe >1.0',        val: d.sharpe_ratio?.toFixed(2)},
+    {key:'enough_trades',    label:'30+ Trades',         val: d.total_trades+' trades'},
+  ];
+
+  checkItems.forEach(c => {
+    const pass = checks[c.key];
+    html += `<div style="background:var(--surface2);border-radius:10px;padding:12px;text-align:center">
+      <div class="check-icon ${pass?'pass':'fail'}" style="margin:0 auto 6px">${pass?'✓':'✗'}</div>
+      <div style="font-size:.68rem;color:var(--muted);margin-bottom:4px">${c.label}</div>
+      <div style="font-family:var(--mono);font-size:.85rem;font-weight:600;color:${pass?'var(--accent)':'var(--red)'}">${c.val}</div>
+    </div>`;
+  });
+  html += '</div></div>';
+
+  // ── STAT CARDS ───────────────────────────────────────────
+  html += `<div class="cards">
+    <div class="card"><div class="lbl">Total Trades</div>
+      <div class="val blue">${d.total_trades||0}</div>
+      <div class="sub">${d.wins||0} wins / ${d.losses||0} losses</div></div>
+    <div class="card"><div class="lbl">Win Rate</div>
+      <div class="val ${(d.win_rate||0)>55?'green':'red'}">${(d.win_rate||0).toFixed(1)}%</div>
+      <div class="sub">Target: >55%</div></div>
+    <div class="card"><div class="lbl">Total P&L</div>
+      <div class="val ${(d.total_pnl||0)>=0?'green':'red'}">${fmt(d.total_pnl||0)}</div>
+      <div class="sub">Avg win: ${fmt(d.avg_win||0)}</div></div>
+    <div class="card"><div class="lbl">Profit Factor</div>
+      <div class="val ${(d.profit_factor||0)>1.5?'green':'yellow'}">${(d.profit_factor||0).toFixed(2)}</div>
+      <div class="sub">Target: >1.50</div></div>
+    <div class="card"><div class="lbl">Max Drawdown</div>
+      <div class="val ${Math.abs(d.max_drawdown||0)<15?'green':'red'}">${fmt(d.max_drawdown||0)}</div>
+      <div class="sub">Target: <$15</div></div>
+    <div class="card"><div class="lbl">Sharpe Ratio</div>
+      <div class="val ${(d.sharpe_ratio||0)>1?'green':'yellow'}">${(d.sharpe_ratio||0).toFixed(2)}</div>
+      <div class="sub">Target: >1.0</div></div>
+    <div class="card"><div class="lbl">Avg Win</div>
+      <div class="val green">${fmt(d.avg_win||0)}</div>
+      <div class="sub">Per winning trade</div></div>
+    <div class="card"><div class="lbl">Avg Hold Time</div>
+      <div class="val">${d.avg_hold_min||0}</div>
+      <div class="sub">minutes per trade</div></div>
+  </div>`;
+
+  // ── BY SYMBOL & STRATEGY ────────────────────────────────
+  html += '<div class="two">';
+
+  // By symbol
+  html += `<div class="box"><div class="box-head">By Symbol</div><table>
+    <tr><th>Symbol</th><th>Trades</th><th>Win Rate</th><th>P&L</th></tr>`;
+  Object.entries(d.by_symbol||{}).forEach(([sym,s]) => {
+    html += `<tr><td style="font-weight:600">${sym}</td><td style="font-family:var(--mono)">${s.trades}</td>
+      <td>${pct(s.win_rate,55,45)}</td>
+      <td style="font-family:var(--mono);color:${s.pnl>=0?'var(--accent)':'var(--red)'}">${fmt(s.pnl)}</td></tr>`;
+  });
+  html += '</table></div>';
+
+  // By strategy
+  html += `<div class="box"><div class="box-head">By Strategy</div><table>
+    <tr><th>Strategy</th><th>Trades</th><th>Win Rate</th><th>P&L</th></tr>`;
+  Object.entries(d.by_strategy||{}).forEach(([strat,s]) => {
+    html += `<tr><td style="font-weight:600">${strat}</td><td style="font-family:var(--mono)">${s.trades}</td>
+      <td>${pct(s.win_rate,55,45)}</td>
+      <td style="font-family:var(--mono);color:${s.pnl>=0?'var(--accent)':'var(--red)'}">${fmt(s.pnl)}</td></tr>`;
+  });
+  html += '</table></div></div>';
+
+  // ── BY SESSION & REGIME ─────────────────────────────────
+  html += '<div class="two">';
+
+  html += `<div class="box"><div class="box-head">By Session</div><table>
+    <tr><th>Session</th><th>Trades</th><th>Win Rate</th></tr>`;
+  Object.entries(d.by_session||{}).forEach(([sess,s]) => {
+    html += `<tr><td>${sess}</td><td style="font-family:var(--mono)">${s.trades}</td><td>${pct(s.win_rate,55,45)}</td></tr>`;
+  });
+  html += '</table></div>';
+
+  html += `<div class="box"><div class="box-head">By Market Regime</div><table>
+    <tr><th>Regime</th><th>Trades</th><th>Win Rate</th></tr>`;
+  Object.entries(d.by_regime||{}).forEach(([reg,s]) => {
+    html += `<tr><td>${reg}</td><td style="font-family:var(--mono)">${s.trades}</td><td>${pct(s.win_rate,55,45)}</td></tr>`;
+  });
+  html += '</table></div></div>';
+
+  // ── WEEKLY P&L ───────────────────────────────────────────
+  const weekly = d.weekly || {};
+  const maxPnl = Math.max(...Object.values(weekly).map(w => Math.abs(w.pnl)), 1);
+  html += `<div class="box" style="margin-bottom:20px"><div class="box-head">Weekly P&L Breakdown</div>`;
+  Object.entries(weekly).sort().forEach(([week, w]) => {
+    const pct = Math.abs(w.pnl) / maxPnl * 100;
+    const col = w.pnl >= 0 ? 'var(--accent)' : 'var(--red)';
+    html += `<div class="weekly-bar">
+      <span class="wk-label">${week}</span>
+      <div class="wk-track"><div class="wk-fill" style="width:${pct}%;background:${col}"></div></div>
+      <span class="wk-val" style="color:${col}">${fmt(w.pnl)}</span>
+      <span style="font-family:var(--mono);font-size:.65rem;color:var(--muted);min-width:60px">${w.trades} trades</span>
+    </div>`;
+  });
+  html += '</div>';
+
+  // ── BEST / WORST ─────────────────────────────────────────
+  html += `<div class="two">
+    <div class="box"><div class="box-head" style="color:var(--accent)">Best Trade</div>
+      <div style="padding:16px;font-family:var(--mono);font-size:.8rem;line-height:2">
+        <div>Symbol: <span style="color:var(--text)">${d.best_trade?.symbol||'—'}</span></div>
+        <div>Profit: <span style="color:var(--accent)">${fmt(d.best_trade?.profit||0)}</span></div>
+        <div>Strategy: <span style="color:var(--text)">${d.best_trade?.strategy||'—'}</span></div>
+      </div>
+    </div>
+    <div class="box"><div class="box-head" style="color:var(--red)">Worst Trade</div>
+      <div style="padding:16px;font-family:var(--mono);font-size:.8rem;line-height:2">
+        <div>Symbol: <span style="color:var(--text)">${d.worst_trade?.symbol||'—'}</span></div>
+        <div>Loss: <span style="color:var(--red)">${fmt(d.worst_trade?.profit||0)}</span></div>
+        <div>Strategy: <span style="color:var(--text)">${d.worst_trade?.strategy||'—'}</span></div>
+      </div>
+    </div>
+  </div>`;
+
+  document.getElementById('content').innerHTML = html;
+}
+
+load(30);
+</script>
+</body>
+</html>

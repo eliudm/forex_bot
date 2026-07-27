@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Forex AI Bot — Live Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0d0f14;
+  --surface: #13161d;
+  --surface2: #1a1e28;
+  --border: #222736;
+  --accent: #00e5a0;
+  --blue: #3b82f6;
+  --red: #f43f5e;
+  --yellow: #fbbf24;
+  --orange: #fb923c;
+  --text: #e2e8f0;
+  --muted: #4b5675;
+  --mono: 'IBM Plex Mono', monospace;
+  --sans: 'IBM Plex Sans', sans-serif;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:var(--bg); color:var(--text); font-family:var(--sans); min-height:100vh; }
+
+body::before {
+  content:''; position:fixed; inset:0; pointer-events:none; z-index:0;
+  background: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(0,229,160,0.06), transparent);
+}
+
+.wrap { position:relative; z-index:1; max-width:1400px; margin:0 auto; padding:0 24px 60px; }
+
+/* HEADER */
+header { display:flex; align-items:center; justify-content:space-between; padding:24px 0 28px; border-bottom:1px solid var(--border); margin-bottom:28px; }
+.brand { display:flex; align-items:center; gap:12px; }
+.brand-icon { width:38px; height:38px; background:var(--accent); border-radius:10px; display:flex; align-items:center; justify-content:center; }
+.brand-icon svg { width:20px; height:20px; fill:#0d0f14; }
+.brand h1 { font-size:1.1rem; font-weight:700; letter-spacing:-0.3px; }
+.brand p  { font-size:0.7rem; color:var(--muted); font-family:var(--mono); letter-spacing:1px; margin-top:1px; }
+
+.hdr-right { display:flex; align-items:center; gap:16px; }
+.live-pill { display:flex; align-items:center; gap:7px; background:var(--surface); border:1px solid var(--border); border-radius:99px; padding:6px 14px; font-family:var(--mono); font-size:0.72rem; }
+.live-dot  { width:7px; height:7px; border-radius:50%; background:var(--muted); }
+.live-dot.on { background:var(--accent); box-shadow:0 0 8px var(--accent); animation:blink 1.5s infinite; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.4} }
+.last-update { font-family:var(--mono); font-size:0.68rem; color:var(--muted); }
+
+/* STAT CARDS */
+.cards { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:26px; }
+.card { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:18px 20px; position:relative; overflow:hidden; }
+.card::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; background:var(--accent); opacity:0.15; }
+.card.highlight::before { opacity:1; }
+.card-lbl { font-size:0.65rem; font-family:var(--mono); color:var(--muted); letter-spacing:1.5px; text-transform:uppercase; margin-bottom:8px; }
+.card-val { font-size:1.75rem; font-weight:700; letter-spacing:-1px; line-height:1; }
+.card-sub { font-size:0.7rem; color:var(--muted); margin-top:5px; font-family:var(--mono); }
+.green { color:var(--accent); }
+.red   { color:var(--red); }
+.blue  { color:var(--blue); }
+
+/* LAYOUT */
+.main { display:grid; grid-template-columns:1fr 360px; gap:20px; margin-bottom:20px; }
+
+/* MARKET TABLE */
+.box { background:var(--surface); border:1px solid var(--border); border-radius:14px; overflow:hidden; }
+.box-head { display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--border); }
+.box-head h3 { font-size:0.9rem; font-weight:600; }
+.box-head span { font-family:var(--mono); font-size:0.68rem; color:var(--muted); }
+
+table { width:100%; border-collapse:collapse; }
+th { text-align:left; padding:9px 20px; font-size:0.62rem; font-family:var(--mono); color:var(--muted); letter-spacing:1.5px; text-transform:uppercase; border-bottom:1px solid var(--border); }
+td { padding:13px 20px; border-bottom:1px solid rgba(34,39,54,.5); font-size:0.83rem; }
+tr:last-child td { border-bottom:none; }
+tr:hover td { background:var(--surface2); }
+
+.sig { display:inline-flex; align-items:center; gap:5px; padding:3px 10px; border-radius:6px; font-family:var(--mono); font-size:0.68rem; font-weight:600; }
+.sig.buy  { background:rgba(0,229,160,.12); color:var(--accent); }
+.sig.sell { background:rgba(244,63,94,.12);  color:var(--red); }
+.sig.wait { background:rgba(75,86,117,.15);  color:var(--muted); }
+
+.conf-wrap { display:flex; align-items:center; gap:8px; }
+.conf-bar  { width:55px; height:4px; background:var(--border); border-radius:99px; overflow:hidden; }
+.conf-fill { height:100%; border-radius:99px; background:var(--accent); transition:width .5s; }
+.conf-num  { font-family:var(--mono); font-size:0.72rem; min-width:30px; }
+
+.reg-tag { font-family:var(--mono); font-size:0.68rem; color:var(--muted); }
+
+/* RIGHT PANEL */
+.right { display:flex; flex-direction:column; gap:16px; }
+.ctrl-box { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:18px; }
+.ctrl-box h3 { font-size:0.85rem; font-weight:600; margin-bottom:14px; }
+
+.status-block { border-radius:10px; padding:12px 14px; margin-bottom:14px; font-size:0.78rem; line-height:1.5; }
+.status-block .st-label { font-family:var(--mono); font-size:0.65rem; font-weight:600; letter-spacing:1px; margin-bottom:4px; }
+
+.metric-row { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border); font-size:0.8rem; }
+.metric-row:last-child { border-bottom:none; }
+.metric-row .mk { color:var(--muted); }
+.metric-row .mv { font-family:var(--mono); font-weight:500; }
+
+/* CHART */
+.chart-box { background:var(--surface); border:1px solid var(--border); border-radius:14px; overflow:hidden; }
+.chart-inner { padding:4px 0 0; }
+canvas { display:block; width:100%; }
+
+/* LOG */
+.log-body { height:160px; overflow-y:auto; padding:10px 14px; font-family:var(--mono); font-size:0.68rem; line-height:1.8; }
+.log-body::-webkit-scrollbar { width:3px; }
+.log-body::-webkit-scrollbar-thumb { background:var(--border); border-radius:99px; }
+.log-row  { display:flex; gap:10px; }
+.log-ts   { color:var(--muted); min-width:70px; flex-shrink:0; }
+.info  { color:var(--text); }
+.ok    { color:var(--accent); }
+.warn  { color:var(--yellow); }
+.err   { color:var(--red); }
+
+/* STATUS COLORS */
+.st-normal    { background:rgba(0,229,160,.08);  color:var(--accent); }
+.st-caution   { background:rgba(251,191,36,.08); color:var(--yellow); }
+.st-recovery  { background:rgba(251,146,60,.08); color:var(--orange); }
+.st-paused    { background:rgba(244,63,94,.08);  color:var(--red); }
+.st-emergency { background:rgba(244,63,94,.15);  color:var(--red); border:1px solid rgba(244,63,94,.3); }
+.st-offline   { background:rgba(75,86,117,.1);   color:var(--muted); }
+
+@media(max-width:900px){ .cards{grid-template-columns:repeat(2,1fr)} .main{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="brand">
+    <div class="brand-icon">
+      <svg viewBox="0 0 24 24"><path d="M3 3h7v7H3zm11 0h7v7h-7zM3 14h7v7H3zm14 3a4 4 0 100-8 4 4 0 000 8z"/></svg>
+    </div>
+    <div>
+      <h1>Forex AI Bot</h1>
+      <p>DERIV MT5 — LIVE DASHBOARD</p>
+    </div>
+  </div>
+  <div class="hdr-right">
+    <div class="last-update" id="lastUpdate">Connecting...</div>
+    <div class="live-pill">
+      <div class="live-dot" id="liveDot"></div>
+      <span id="liveLabel">OFFLINE</span>
+    </div>
+  </div>
+</header>
+
+<!-- STAT CARDS -->
+<div class="cards">
+  <div class="card">
+    <div class="card-lbl">Balance</div>
+    <div class="card-val green" id="cBal">—</div>
+    <div class="card-sub" id="cBalSub">Waiting for bot...</div>
+  </div>
+  <div class="card">
+    <div class="card-lbl">Today's P&L</div>
+    <div class="card-val" id="cPnl">—</div>
+    <div class="card-sub" id="cPnlSub">0.00% return</div>
+  </div>
+  <div class="card highlight">
+    <div class="card-lbl">Win Rate</div>
+    <div class="card-val" id="cWr">—</div>
+    <div class="card-sub" id="cTrades">0 trades today</div>
+  </div>
+  <div class="card">
+    <div class="card-lbl">Open Trades</div>
+    <div class="card-val blue" id="cOpen">—</div>
+    <div class="card-sub">Max: 3 allowed</div>
+  </div>
+</div>
+
+<div class="main">
+  <!-- MARKET TABLE -->
+  <div>
+    <div class="box" style="margin-bottom:18px">
+      <div class="box-head">
+        <h3>Market Signals <span style="font-size:.65rem;color:var(--muted);font-family:var(--mono);margin-left:8px">LIVE FROM BOT</span></h3>
+        <span id="scanTime">Last scan: —</span>
+      </div>
+      <table>
+        <thead><tr>
+          <th>Symbol</th><th>Signal</th><th>Confidence</th><th>Regime</th><th>R:R</th>
+        </tr></thead>
+        <tbody id="marketBody"></tbody>
+      </table>
+    </div>
+
+    <!-- EQUITY CHART -->
+    <div class="chart-box">
+      <div class="box-head"><h3>Equity Curve</h3><span id="chartSub">—</span></div>
+      <div class="chart-inner">
+        <div style="position:relative;height:150px;padding:8px 12px 0">
+          <canvas id="eqChart" role="img" aria-label="Equity curve of account balance over time">Balance history</canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT PANEL -->
+  <div class="right">
+
+    <!-- BOT STATUS -->
+    <div class="ctrl-box">
+      <h3>Bot Status</h3>
+      <div class="status-block st-offline" id="statusBlock">
+        <div class="st-label" id="statusLabel">OFFLINE</div>
+        <div id="statusReason">Start the bot with: python main_bot.py</div>
+      </div>
+      <div class="metric-row"><span class="mk">Loss streak</span><span class="mv" id="mLoss">—</span></div>
+      <div class="metric-row"><span class="mk">Win streak</span><span class="mv" id="mWin">—</span></div>
+      <div class="metric-row"><span class="mk">Peak balance</span><span class="mv" id="mPeak">—</span></div>
+      <div class="metric-row"><span class="mk">Retrain needed</span><span class="mv" id="mRetrain">—</span></div>
+      <div class="metric-row"><span class="mk">Last updated</span><span class="mv" id="mTime">—</span></div>
+    </div>
+
+    <!-- BOT CONTROLS -->
+    <div class="ctrl-box">
+      <h3>Bot Controls</h3>
+
+      <div style="margin-bottom:12px">
+        <div style="font-size:.65rem;font-family:var(--mono);color:var(--muted);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px">Execution Mode</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div id="btnSemi" onclick="setMode('SEMI_AUTO')" style="padding:10px;border-radius:10px;border:1px solid var(--accent);background:rgba(0,229,160,.08);text-align:center;cursor:pointer;transition:.15s">
+            <div style="font-weight:600;font-size:.82rem;color:var(--accent)">Semi-Auto</div>
+            <div style="font-size:.62rem;color:var(--muted);margin-top:2px">You approve trades</div>
+          </div>
+          <div id="btnFull" onclick="setMode('FULL_AUTO')" style="padding:10px;border-radius:10px;border:1px solid var(--border);text-align:center;cursor:pointer;transition:.15s">
+            <div style="font-weight:600;font-size:.82rem">Full Auto</div>
+            <div style="font-size:.62rem;color:var(--muted);margin-top:2px">Bot trades alone</div>
+          </div>
+        </div>
+      </div>
+
+      <button id="startBtn" onclick="botStart()" style="width:100%;padding:12px;border-radius:10px;border:none;background:var(--accent);color:#0d0f14;font-family:var(--sans);font-size:.875rem;font-weight:700;cursor:pointer;margin-bottom:8px;transition:.15s">
+        &#9654; START BOT
+      </button>
+      <button id="stopBtn" onclick="botStop()" style="width:100%;padding:12px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:var(--sans);font-size:.875rem;font-weight:700;cursor:pointer;margin-bottom:8px;transition:.15s">
+        &#9632; STOP BOT
+      </button>
+      <button onclick="botBacktest()" style="width:100%;padding:12px;border-radius:10px;border:1px solid rgba(59,130,246,.3);background:rgba(59,130,246,.08);color:#60a5fa;font-family:var(--sans);font-size:.875rem;font-weight:700;cursor:pointer;transition:.15s">
+        &#128202; RUN BACKTEST
+      </button>
+
+      <div id="ctrlMsg" style="margin-top:10px;font-size:.72rem;font-family:var(--mono);color:var(--muted);min-height:18px;text-align:center"></div>
+    </div>
+
+    <!-- RISK SETTINGS -->
+    <div class="ctrl-box">
+      <h3>Risk Settings</h3>
+      <div style="font-size:.72rem;color:var(--muted);margin-bottom:2px;display:flex;justify-content:space-between">
+        <span>Risk per trade</span><span style="color:var(--accent);font-family:var(--mono)" id="riskVal">1%</span>
+      </div>
+      <input type="range" min="0.5" max="5" step="0.5" value="1" style="width:100%;margin-bottom:12px" oninput="document.getElementById('riskVal').textContent=this.value+'%'">
+      <div style="font-size:.72rem;color:var(--muted);margin-bottom:2px;display:flex;justify-content:space-between">
+        <span>Max open trades</span><span style="color:var(--accent);font-family:var(--mono)" id="tradesVal">3</span>
+      </div>
+      <input type="range" min="1" max="10" step="1" value="3" style="width:100%;margin-bottom:12px" oninput="document.getElementById('tradesVal').textContent=this.value">
+      <div style="font-size:.72rem;color:var(--muted);margin-bottom:2px;display:flex;justify-content:space-between">
+        <span>Daily loss limit</span><span style="color:var(--accent);font-family:var(--mono)" id="lossVal">3%</span>
+      </div>
+      <input type="range" min="1" max="10" step="1" value="3" style="width:100%" oninput="document.getElementById('lossVal').textContent=this.value+'%'">
+    </div>
+
+    <!-- HOW TO START (collapsed) -->
+    <div class="ctrl-box">
+      <h3>Setup reminder</h3>
+      <div style="font-size:.72rem;line-height:1.9;color:var(--muted)">
+        <div style="margin-bottom:6px;color:var(--text)">Window 1 — bot:</div>
+        <div style="background:var(--bg);border-radius:8px;padding:8px 12px;font-family:var(--mono);font-size:.65rem;line-height:2">
+          <span style="color:var(--muted)">&gt;</span> <span style="color:var(--accent)">cd C:\Users\Administrator\forex_bot</span><br>
+          <span style="color:var(--muted)">&gt;</span> <span style="color:var(--accent)">python main_bot.py</span>
+        </div>
+        <div style="margin:6px 0;color:var(--text)">Window 2 — dashboard server:</div>
+        <div style="background:var(--bg);border-radius:8px;padding:8px 12px;font-family:var(--mono);font-size:.65rem;line-height:2">
+          <span style="color:var(--muted)">&gt;</span> <span style="color:var(--accent)">cd C:\Users\Administrator\forex_bot</span><br>
+          python dashboard/server.py
+        </div>
+        <div style="margin-top:10px">This page auto-refreshes every 10 seconds.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- LOG -->
+<div class="box">
+  <div class="box-head"><h3>Bot Log</h3><button onclick="clearLog()" style="background:none;border:none;color:var(--muted);font-family:var(--mono);font-size:.7rem;cursor:pointer">CLEAR</button></div>
+  <div class="log-body" id="logBody"></div>
+</div>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+let SYMBOLS = [];
+let LABELS = {};
+
+let chart;
+let isLive = false;
+
+function initChart() {
+  const ctx = document.getElementById('eqChart').getContext('2d');
+  chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: ['Start'],
+      datasets: [{
+        data: [500],
+        borderColor: '#00e5a0',
+        backgroundColor: 'rgba(0,229,160,0.06)',
+        borderWidth: 1.5,
+        pointRadius: 0,
+        fill: true,
+        tension: 0.4
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { display: false },
+        y: {
+          grid: { color: 'rgba(255,255,255,0.04)' },
+          ticks: { color: '#4b5675', font: { size: 10, family: 'IBM Plex Mono' }, callback: v => '$' + Math.round(v) }
+        }
+      }
+    }
+  });
+}
+
+const STATUS_CLASS = {
+  NORMAL:'st-normal', CAUTION:'st-caution', RECOVERY:'st-recovery',
+  PAUSED:'st-paused', EMERGENCY:'st-emergency', OFFLINE:'st-offline'
+};
+
+async function fetchAll() {
+  // Fetch each API endpoint individually so one failure doesn't block others
+  const safe = async (url, fallback) => {
+    try {
+      const r = await fetch(url);
+      if (!r.ok) return fallback;
+      return await r.json();
+    } catch(e) {
+      return fallback;
+    }
+  };
+
+  const status  = await safe('/api/status',  {status:'OFFLINE', status_reason:'Cannot reach server'});
+  const stats   = await safe('/api/stats',   {balance:0, total_pnl:0, return_pct:0, total_trades:0, wins:0, losses:0, win_rate:0, open_trades:0});
+  const signals = await safe('/api/signals', {});
+  const equity  = await safe('/api/equity',  [{t:'Start', v:0}]);
+  const log     = await safe('/api/log',     []);
+
+  if (status.status && status.status !== 'OFFLINE') {
+    isLive = true;
+    updateHeader(true);
+  } else {
+    isLive = false;
+    updateHeader(false);
+  }
+
+  updateCards(stats);
+  updateStatus(status);
+  updateMarkets(signals);
+  updateChart(equity, stats.balance);
+  updateLog(log);
+}
+
+function updateHeader(live) {
+  document.getElementById('liveDot').className = 'live-dot' + (live ? ' on' : '');
+  document.getElementById('liveLabel').textContent = live ? 'LIVE' : 'OFFLINE';
+  document.getElementById('lastUpdate').textContent = 'Updated: ' + new Date().toLocaleTimeString();
+}
+
+function updateCards(s) {
+  const bal = s.balance || 0;
+  const pnl = s.total_pnl || 0;
+  document.getElementById('cBal').textContent    = '$' + bal.toFixed(2);
+  document.getElementById('cBal').className      = 'card-val ' + (bal >= 500 ? 'green' : 'red');
+  document.getElementById('cBalSub').textContent = 'Starting: $500.00';
+  document.getElementById('cPnl').textContent    = (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2);
+  document.getElementById('cPnl').className      = 'card-val ' + (pnl >= 0 ? 'green' : 'red');
+  document.getElementById('cPnlSub').textContent = (s.return_pct || 0).toFixed(2) + '% return';
+  document.getElementById('cWr').textContent     = s.total_trades > 0 ? s.win_rate + '%' : '—';
+  document.getElementById('cTrades').textContent = (s.total_trades || 0) + ' trades today';
+  document.getElementById('cOpen').textContent   = s.open_trades || 0;
+}
+
+function updateStatus(s) {
+  const st   = s.status || 'OFFLINE';
+  const block = document.getElementById('statusBlock');
+  block.className = 'status-block ' + (STATUS_CLASS[st] || 'st-offline');
+  document.getElementById('statusLabel').textContent  = st;
+  document.getElementById('statusReason').textContent = s.status_reason || '—';
+  document.getElementById('mLoss').textContent    = s.loss_streak || 0;
+  document.getElementById('mWin').textContent     = s.win_streak  || 0;
+  document.getElementById('mPeak').textContent    = s.peak_balance ? '$' + s.peak_balance.toFixed(2) : '—';
+  document.getElementById('mRetrain').textContent = s.retrain_needed ? 'YES' : 'No';
+  document.getElementById('mRetrain').style.color = s.retrain_needed ? '#f43f5e' : '#00e5a0';
+  const ts = s.saved_at ? (() => {
+    try {
+      const clean = s.saved_at.replace(',', '.').replace(' ', 'T');
+      const d = new Date(clean);
+      return isNaN(d) ? s.saved_at.slice(11,19) : d.toLocaleTimeString();
+    } catch(e) { return s.saved_at.slice(0,19); }
+  })() : '—';
+  document.getElementById('mTime').textContent    = ts;
+  document.getElementById('scanTime').textContent = 'Last scan: ' + ts;
+}
+
+function updateMarkets(signals) {
+  SYMBOLS = Object.keys(signals);
+  const tbody = document.getElementById('marketBody');
+  if (!SYMBOLS.length) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">No markets yet. Bot is starting up.</td></tr>';
+    return;
+  }
+  let rows = '';
+  for (const sym of SYMBOLS) {
+    const sig  = signals[sym] || {action:'WAIT',confidence:0,regime:'--',rr_ratio:0};
+    const act  = (sig.action||'WAIT').toLowerCase();
+    const conf = sig.confidence || 0;
+    const rr   = sig.rr_ratio  || 0;
+    const confPct = Math.round(conf * 100);
+    rows += '<tr>';
+    rows += '<td style="font-weight:600">' + sym + '</td>';
+    rows += '<td><span class="sig ' + act + '">' + (act==='buy'?'BUY':act==='sell'?'SELL':'WAIT') + '</span></td>';
+    rows += '<td><div class="conf-wrap"><div class="conf-bar"><div class="conf-fill" style="width:' + confPct + '%"></div></div><span class="conf-num">' + (conf>0?confPct+'%':'--') + '</span></div></td>';
+    rows += '<td><span class="reg-tag">' + (sig.regime||'--') + '</span></td>';
+    rows += '<td style="font-family:var(--mono);font-size:.72rem">' + (rr>0?'1:'+rr.toFixed(1):'--') + '</td>';
+    rows += '</tr>';
+  }
+  tbody.innerHTML = rows;
+};
+    const act  = (sig.action || 'WAIT').toLowerCase();
+    const conf = sig.confidence || 0;
+    const rr   = sig.rr_ratio  || 0;
+    return `<tr>
+      <td style="font-weight:600">${LABELS[sym] || sym}</td>
+      <td><span class="sig ${act}">${act === 'buy' ? '↑ BUY' : act === 'sell' ? '↓ SELL' : '— WAIT'}</span></td>
+      <td><div class="conf-wrap">
+        <div class="conf-bar"><div class="conf-fill" style="width:${Math.round(conf*100)}%"></div></div>
+        <span class="conf-num">${conf > 0 ? Math.round(conf*100) + '%' : '—'}</span>
+      </div></td>
+      <td><span class="reg-tag">${sig.regime || '—'}</span></td>
+      <td style="font-family:var(--mono);font-size:.72rem">${rr > 0 ? '1:' + rr.toFixed(1) : '—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+function updateChart(equity, currentBal) {
+  if (!equity || equity.length < 2) return;
+  const labels = equity.map(p => p.t);
+  const data   = equity.map(p => p.v);
+  chart.data.labels = labels;
+  chart.data.datasets[0].data = data;
+  const isUp = (currentBal || 500) >= 500;
+  chart.data.datasets[0].borderColor      = isUp ? '#00e5a0' : '#f43f5e';
+  chart.data.datasets[0].backgroundColor  = isUp ? 'rgba(0,229,160,0.06)' : 'rgba(244,63,94,0.06)';
+  chart.update('none');
+  const minV = Math.min(...data), maxV = Math.max(...data);
+  document.getElementById('chartSub').textContent =
+    '$' + minV.toFixed(0) + ' — $' + maxV.toFixed(0);
+}
+
+let shownLines = new Set();
+function updateLog(lines) {
+  lines.forEach(line => {
+    if (!shownLines.has(line)) {
+      shownLines.add(line);
+      const type = line.includes('ERROR') ? 'err'
+                 : line.includes('WARNING') || line.includes('WARN') ? 'warn'
+                 : line.includes('Trade') || line.includes('Signal') ? 'ok'
+                 : 'info';
+      addLog(line, type);
+    }
+  });
+  if (shownLines.size > 500) shownLines = new Set([...shownLines].slice(-200));
+}
+
+function addLog(msg, type='info') {
+  const box = document.getElementById('logBody');
+  const t   = new Date().toLocaleTimeString('en',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  const d   = document.createElement('div');
+  d.className = 'log-row';
+  d.innerHTML = `<span class="log-ts">${t}</span><span class="${type}">${msg.substring(0,120)}</span>`;
+  box.appendChild(d);
+  box.scrollTop = box.scrollHeight;
+  while (box.children.length > 300) box.removeChild(box.firstChild);
+}
+
+function clearLog() { document.getElementById('logBody').innerHTML = ''; shownLines.clear(); }
+
+// ── Bot Controls ──────────────────────────────────────────────
+let currentMode = 'SEMI_AUTO';
+
+async function botStart() {
+  try {
+    const r = await fetch('/api/control/start', { method: 'POST' });
+    const d = await r.json();
+    showCtrlMsg('Bot started', 'ok');
+    addLog('START signal sent to bot', 'ok');
+    document.getElementById('liveDot').className = 'live-dot on';
+    document.getElementById('liveLabel').textContent = 'LIVE';
+  } catch(e) { showCtrlMsg('Cannot reach server — is server.py running?', 'err'); }
+}
+
+async function botStop() {
+  try {
+    const r = await fetch('/api/control/stop', { method: 'POST' });
+    const d = await r.json();
+    showCtrlMsg('Bot stopped', 'warn');
+    addLog('STOP signal sent to bot', 'warn');
+  } catch(e) { showCtrlMsg('Cannot reach server', 'err'); }
+}
+
+async function botBacktest() {
+  showCtrlMsg('Backtest runs in PowerShell: python backtest/run_backtest.py', 'info');
+  addLog('To run backtest: python backtest/run_backtest.py', 'info');
+}
+
+async function setMode(mode) {
+  currentMode = mode;
+  const semi = document.getElementById('btnSemi');
+  const full = document.getElementById('btnFull');
+  if (mode === 'SEMI_AUTO') {
+    semi.style.borderColor = 'var(--accent)';
+    semi.style.background  = 'rgba(0,229,160,.08)';
+    semi.querySelector('div').style.color = 'var(--accent)';
+    full.style.borderColor = 'var(--border)';
+    full.style.background  = 'transparent';
+    full.querySelector('div').style.color = 'var(--text)';
+  } else {
+    full.style.borderColor = 'var(--accent)';
+    full.style.background  = 'rgba(0,229,160,.08)';
+    full.querySelector('div').style.color = 'var(--accent)';
+    semi.style.borderColor = 'var(--border)';
+    semi.style.background  = 'transparent';
+    semi.querySelector('div').style.color = 'var(--text)';
+  }
+  try {
+    await fetch('/api/control/mode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode })
+    });
+    showCtrlMsg('Mode set to: ' + mode, 'ok');
+    addLog('Mode changed to: ' + mode, 'ok');
+  } catch(e) { showCtrlMsg('Mode saved locally only', 'warn'); }
+}
+
+async function syncControlStatus() {
+  try {
+    const d = await fetch('/api/control/status').then(r => r.json());
+    if (d.mode) setMode(d.mode);
+  } catch(e) {}
+}
+
+function showCtrlMsg(msg, type) {
+  const el = document.getElementById('ctrlMsg');
+  const colors = { ok:'var(--accent)', warn:'#fbbf24', err:'#f43f5e', info:'var(--muted)' };
+  el.style.color = colors[type] || colors.info;
+  el.textContent = msg;
+  setTimeout(() => { el.textContent = ''; }, 4000);
+}
+
+// ── Init ──────────────────────────────────────────────────────
+initChart();
+addLog('Dashboard loaded. Connecting to bot server...', 'info');
+fetchAll();
+syncControlStatus();
+setInterval(fetchAll, 10000);  // Refresh every 10 seconds
+</script>
+</body>
+</html>
