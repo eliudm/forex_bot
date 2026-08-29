@@ -151,6 +151,10 @@ class PaperBroker:
         logger.info(f"[PAPER] Connected. Simulated balance: ${self.balance:.2f}")
         return True
 
+    def ensure_connected(self) -> bool:
+        """No real connection to lose in paper mode — always healthy."""
+        return True
+
     def disconnect(self):
         self._save_state()
         self.connected = False

@@ -589,6 +589,18 @@ class ForexAIBot:
                 # Check for dashboard control signals
                 self._check_control_file()
 
+                # Self-heal a dropped connection (terminal restart, network
+                # blip) before doing anything else this cycle — without this,
+                # MT5 mode would silently log "no data" forever rather than
+                # trying to recover. No-op for PaperBroker.
+                if not self.bridge.ensure_connected():
+                    logger.warning("Broker not connected. Skipping this scan cycle.")
+                    if max_scans and scan_count >= max_scans:
+                        self.running = False
+                        break
+                    time.sleep(scan_interval)
+                    continue
+
                 # Advance the broker and settle any trades that closed
                 self._process_closed_trades()
 

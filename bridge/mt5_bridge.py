@@ -22,7 +22,8 @@
 import MetaTrader5 as mt5
 import pandas as pd
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
+import json
 import logging
 import sys
 import os
@@ -64,11 +65,45 @@ class MT5Bridge:
     """
 
     MAGIC = 20240101
+    MAX_HISTORY_LOOKBACK_DAYS = 7
 
-    def __init__(self):
+    def __init__(self, history_state_path: str = "logs/mt5_bridge_state.json"):
         self.connected = False
-        self._last_history_check = datetime.now()
+        self.history_state_path = history_state_path
+        self._last_history_check = self._load_history_watermark()
         logger.info("MT5Bridge created. Call connect() to log in.")
+
+    # ─────────────────────────────────────────
+    #  HISTORY WATERMARK (persisted so a restart doesn't miss trades
+    #  that closed while the bot process was completely offline)
+    # ─────────────────────────────────────────
+    def _load_history_watermark(self) -> datetime:
+        floor = datetime.now() - timedelta(days=self.MAX_HISTORY_LOOKBACK_DAYS)
+        try:
+            if os.path.exists(self.history_state_path):
+                with open(self.history_state_path) as f:
+                    saved = datetime.fromisoformat(json.load(f)["last_history_check"])
+                if saved < floor:
+                    logger.warning(
+                        f"Last recorded MT5 history check was {saved} — more than "
+                        f"{self.MAX_HISTORY_LOOKBACK_DAYS} days ago. Capping lookback to "
+                        f"{floor} to avoid a huge query; any trade that closed before that "
+                        f"while the bot was offline won't be reconciled automatically — "
+                        f"check MT5's own trade history for that period."
+                    )
+                    return floor
+                return saved
+        except Exception as e:
+            logger.warning(f"Could not load MT5 history watermark: {e}")
+        return datetime.now()
+
+    def _save_history_watermark(self):
+        try:
+            os.makedirs(os.path.dirname(self.history_state_path) or ".", exist_ok=True)
+            with open(self.history_state_path, "w") as f:
+                json.dump({"last_history_check": self._last_history_check.isoformat()}, f)
+        except Exception as e:
+            logger.debug(f"Could not save MT5 history watermark: {e}")
 
     # ─────────────────────────────────────────
     #  ADVANCE / DETECT CLOSED TRADES
@@ -84,6 +119,7 @@ class MT5Bridge:
         now = datetime.now()
         deals = mt5.history_deals_get(self._last_history_check, now)
         self._last_history_check = now
+        self._save_history_watermark()
 
         if not deals:
             return []
@@ -137,6 +173,34 @@ class MT5Bridge:
 
         self.connected = True
         return True
+
+    # ─────────────────────────────────────────
+    #  ENSURE CONNECTION IS STILL ALIVE (self-healing)
+    # ─────────────────────────────────────────
+    def ensure_connected(self) -> bool:
+        """
+        Checks the MT5 connection is actually alive and reconnects if not.
+
+        Without this, a dropped connection (terminal restart, network
+        blip, broker maintenance) would leave the bot silently logging
+        "no data" for every symbol, forever, without ever trying to
+        recover. Call this once per scan cycle, before doing anything else.
+
+        mt5.terminal_info()/account_info() are cheap local IPC calls to the
+        already-running terminal — they return None if that connection is
+        down, without needing a network round-trip to the broker.
+        """
+        if mt5.terminal_info() is not None and mt5.account_info() is not None:
+            return True
+
+        logger.warning("MT5 connection appears to be down — attempting to reconnect...")
+        self.connected = False
+        if self.connect():
+            logger.info("MT5 reconnected successfully.")
+            return True
+
+        logger.error("MT5 reconnect attempt failed. Will retry next cycle.")
+        return False
 
     # ─────────────────────────────────────────
     #  DISCONNECT FROM MT5
