@@ -15,14 +15,14 @@
 #   Step 4: Message your new bot once (say "hello")
 #   Step 5: Visit: https://api.telegram.org/bot<TOKEN>/getUpdates
 #           Look for "chat":{"id": YOUR_CHAT_ID}
-#   Step 6: Add TOKEN and CHAT_ID to config/config.py
+#   Step 6: Add TOKEN and CHAT_ID to your .env file (see .env.example)
 # ============================================================
 
 import logging
 import json
 import urllib.request
 import urllib.parse
-from config.config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
+from config.settings import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
 
 logger = logging.getLogger(__name__)
 
@@ -116,9 +116,14 @@ class TelegramAlerts:
 
         return self._send(text, reply_markup=reply_markup)
 
+    def send(self, text: str) -> bool:
+        """Generic freeform message (bot status changes, pause notices, etc.)."""
+        return self._send(text)
+
     def send_trade_opened(self, trade: dict) -> bool:
         """Notify when a trade is successfully opened."""
         direction_emoji = "🟢" if trade.get("direction") == "BUY" else "🔴"
+        lots = trade.get("lot", trade.get("volume", 0.01))
         text = (
             f"{direction_emoji} <b>TRADE OPENED</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -127,7 +132,7 @@ class TelegramAlerts:
             f"<b>Price:</b>   {trade.get('price', 0):.5f}\n"
             f"<b>SL:</b>      {trade.get('sl', 0):.5f}\n"
             f"<b>TP:</b>      {trade.get('tp', 0):.5f}\n"
-            f"<b>Lots:</b>    {trade.get('volume', 0.01)}\n"
+            f"<b>Lots:</b>    {lots}\n"
             f"<b>Ticket:</b>  #{trade.get('ticket', 0)}\n"
         )
         return self._send(text)
