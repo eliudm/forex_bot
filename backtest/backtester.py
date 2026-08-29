@@ -30,10 +30,13 @@ import logging
 from datetime import datetime
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from ai_engine.indicators     import IndicatorEngine
-from ai_engine.strategy_engine import AIStrategyEngine
+from ai_engine.indicators      import IndicatorEngine
+from ai_engine.enhanced_engine import EnhancedAIEngine
+from agents.coordinator        import TradeCoordinator
 
 logger = logging.getLogger(__name__)
+
+BACKTEST_MODEL_DIR = "models/_backtest"
 
 
 class Backtester:
@@ -58,7 +61,13 @@ class Backtester:
         self.risk_pct        = risk_pct
         self.min_confidence  = min_confidence
         self.indicators      = IndicatorEngine()
-        self.ai_engine       = AIStrategyEngine(symbol)
+        # Same engine class AND same coordinator (scanner -> setup -> sentiment
+        # -> on-chain) main.py trades with, so a backtest actually validates
+        # the pipeline that runs live — not a different, simpler model.
+        # model_dir keeps this out of the live/paper model directory (see
+        # ai_engine/enhanced_engine.py's docstring on model_dir).
+        self.ai_engine       = EnhancedAIEngine(symbol, model_dir=BACKTEST_MODEL_DIR)
+        self.coordinator     = TradeCoordinator()
         self.df              = None
 
     def load_data(self, df: pd.DataFrame):
@@ -112,7 +121,6 @@ class Backtester:
         equity_curve  = [balance]
         trades        = []
         open_trade    = None   # Only allow 1 open trade at a time for simplicity
-        pip_size      = self._get_pip_size()
 
         # Use a rolling window: look at the last 150 candles to predict the next
         window = 150
@@ -152,8 +160,9 @@ class Backtester:
                 equity_curve.append(balance)
                 continue   # Don't open a new trade on same candle we closed
 
-            # ── Generate signal for this candle ───────────────────
-            signal = self.ai_engine.predict(window_df, self.min_confidence)
+            # ── Generate signal for this candle (same coordinator path as live) ──
+            signal = self.coordinator.decide(self.symbol, window_df, self.ai_engine,
+                                              self.min_confidence)["signal"]
 
             if signal['action'] in ("BUY", "SELL"):
                 entry_price = candle['close']
@@ -279,9 +288,3 @@ class Backtester:
         print(f"  Best Trade      : ${results['best_trade']:,.2f}")
         print(f"  Worst Trade     : ${results['worst_trade']:,.2f}")
         print("="*55 + "\n")
-
-    def _get_pip_size(self) -> float:
-        if "JPY" in self.symbol: return 0.01
-        if "XAU" in self.symbol: return 0.1
-        if "Index" in self.symbol: return 0.01
-        return 0.0001

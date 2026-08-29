@@ -66,6 +66,8 @@ from sklearn.metrics import classification_report
 import warnings
 warnings.filterwarnings('ignore')
 
+from utils.market_specs import pip_size as _shared_pip_size
+
 try:
     from xgboost import XGBClassifier
     XGBOOST_AVAILABLE = True
@@ -81,17 +83,22 @@ class EnhancedAIEngine:
     Drop-in replacement for AIStrategyEngine.
     """
 
-    def __init__(self, symbol: str):
+    def __init__(self, symbol: str, model_dir: str = "models"):
+        # model_dir lets callers (e.g. the backtester) keep their trained
+        # models out of the live/paper trading model directory — otherwise
+        # a backtest run for "EURUSD" would silently overwrite the model
+        # main.py actually trades with, trained on synthetic data instead
+        # of real broker history.
         self.symbol      = symbol
         self.model       = None
         self.scaler      = StandardScaler()
         self.features    = []
         self.is_trained  = False
-        self.model_path  = f"models/{symbol}_v2_model.pkl"
-        self.scaler_path = f"models/{symbol}_v2_scaler.pkl"
-        self.feat_path   = f"models/{symbol}_v2_features.pkl"
+        self.model_path  = f"{model_dir}/{symbol}_v2_model.pkl"
+        self.scaler_path = f"{model_dir}/{symbol}_v2_scaler.pkl"
+        self.feat_path   = f"{model_dir}/{symbol}_v2_features.pkl"
         self.performance = {"signals": 0, "filtered": 0, "traded": 0}
-        os.makedirs("models", exist_ok=True)
+        os.makedirs(model_dir, exist_ok=True)
         self._load_model()
 
     # ─────────────────────────────────────────
@@ -509,10 +516,7 @@ class EnhancedAIEngine:
         else:                      return "RANGING"
 
     def _pip_size(self):
-        if "JPY" in self.symbol:   return 0.01
-        if "XAU" in self.symbol:   return 0.1
-        if "Index" in self.symbol: return 0.01
-        return 0.0001
+        return _shared_pip_size(self.symbol)
 
     def _save_model(self):
         with open(self.model_path,  'wb') as f: pickle.dump(self.model,    f)

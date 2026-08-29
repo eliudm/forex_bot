@@ -25,6 +25,8 @@ from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 
+from utils.market_specs import pip_size as _pip_size
+
 logger = logging.getLogger(__name__)
 
 STATE_FILE = "logs/paper_broker_state.json"
@@ -57,16 +59,6 @@ def _profile(symbol: str):
         base = 500 + (seed % 8000)
         return (float(base), base * 0.004)
     return DEFAULT_PROFILE
-
-
-def _pip_size(symbol: str) -> float:
-    if "JPY" in symbol:
-        return 0.01
-    if "XAU" in symbol:
-        return 0.1
-    if "Index" in symbol:
-        return 0.01
-    return 0.0001
 
 
 def _pip_value_per_lot(symbol: str) -> float:

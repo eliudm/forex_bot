@@ -8,7 +8,6 @@ if hasattr(sys.stdout, "reconfigure"):
 logging.basicConfig(level=logging.WARNING)
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from backtester import Backtester
-from ai_engine.indicators import IndicatorEngine
 
 def generate_sample_data(n=800, symbol="XAUUSD"):
     # Seed per-symbol (not a fixed constant) — otherwise every symbol gets
