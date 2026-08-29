@@ -18,11 +18,15 @@
 =============================================================
 """
 
+import json
+import os
 import logging
 from datetime import datetime, date
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_STATE_PATH = "logs/risk_manager_state.json"
 
 
 class RiskManager:
@@ -42,18 +46,25 @@ class RiskManager:
 
     def __init__(self, balance: float, risk_pct: float = 0.01,
                  max_trades: int = 3, daily_loss_pct: float = 0.03,
-                 min_rr: float = 2.0):
-        
+                 min_rr: float = 2.0, state_path: str = DEFAULT_STATE_PATH):
+
         self.initial_balance = balance
         self.risk_pct        = risk_pct        # 0.01 = risk 1% per trade
         self.max_trades      = max_trades      # Max 3 open trades at once
         self.daily_loss_pct  = daily_loss_pct  # Stop trading if -3% today
         self.min_rr          = min_rr          # Minimum 2:1 reward/risk
+        self.state_path       = state_path
 
         # Daily tracking
         self.daily_trades     = []
         self.daily_loss       = 0.0
         self.last_reset_date  = date.today()
+
+        # Without this, restarting the process (crash, update, connectivity
+        # blip) silently forgets today's losses — the daily loss limit would
+        # then let the account lose up to daily_loss_pct AGAIN on top of
+        # whatever it already lost before the restart.
+        self._load_state()
 
     def _reset_daily_if_needed(self):
         """Resets daily counters at the start of each new day."""
@@ -63,6 +74,38 @@ class RiskManager:
             self.daily_loss      = 0.0
             self.daily_trades    = []
             self.last_reset_date = today
+            self._save_state()
+
+    def _save_state(self):
+        try:
+            os.makedirs(os.path.dirname(self.state_path) or ".", exist_ok=True)
+            with open(self.state_path, "w") as f:
+                json.dump({
+                    "daily_loss":      self.daily_loss,
+                    "daily_trades":    [{"profit": t["profit"], "time": t["time"].isoformat()}
+                                         for t in self.daily_trades],
+                    "last_reset_date": self.last_reset_date.isoformat(),
+                }, f, indent=2)
+        except Exception as e:
+            logger.debug(f"Could not save risk manager state: {e}")
+
+    def _load_state(self):
+        if not os.path.exists(self.state_path):
+            return
+        try:
+            with open(self.state_path) as f:
+                state = json.load(f)
+            saved_date = date.fromisoformat(state["last_reset_date"])
+            if saved_date != date.today():
+                return  # stale (yesterday or earlier) — start today fresh, as normal
+            self.daily_loss      = state.get("daily_loss", 0.0)
+            self.daily_trades    = [{"profit": t["profit"], "time": datetime.fromisoformat(t["time"])}
+                                     for t in state.get("daily_trades", [])]
+            self.last_reset_date = saved_date
+            logger.info(f"Restored today's risk state: ${self.daily_loss:.2f} loss so far, "
+                        f"{len(self.daily_trades)} trades recorded today.")
+        except Exception as e:
+            logger.warning(f"Could not load risk manager state: {e}")
 
     def check_trade(self, signal: dict, open_positions: list, account: dict) -> dict:
         """
@@ -148,6 +191,7 @@ class RiskManager:
             logger.info(f"Trade loss recorded: ${profit:.2f}. Today's total loss: ${self.daily_loss:.2f}")
         else:
             logger.info(f"Trade win recorded: +${profit:.2f}")
+        self._save_state()
 
     def get_daily_stats(self) -> dict:
         """Returns today's trading statistics."""
