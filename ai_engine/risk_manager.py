@@ -110,7 +110,7 @@ class RiskManager:
         if confidence < 0.35:
             return self._reject(
                 f"AI confidence too low ({confidence:.0%}). "
-                f"Minimum: 60%. Waiting for a clearer signal."
+                f"Minimum: 35%. Waiting for a clearer signal."
             )
 
         # ── CHECK 5: Calculate risk amount ────────────────────────
