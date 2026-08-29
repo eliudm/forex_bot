@@ -121,10 +121,12 @@ TELEGRAM_ENABLED = bool(TELEGRAM_TOKEN and TELEGRAM_CHAT_ID)
 
 # ─────────────────────────────────────────────
 #  EXECUTION MODE
-#  SEMI_AUTO = you approve each trade
-#  FULL_AUTO = bot trades automatically
+#  SEMI_AUTO = you approve each trade   <- default; switch to FULL_AUTO
+#              deliberately, once you trust it, not by inheriting a
+#              risky default
+#  FULL_AUTO = bot trades automatically with no human in the loop
 # ─────────────────────────────────────────────
-EXECUTION_MODE = "FULL_AUTO"
+EXECUTION_MODE = "SEMI_AUTO"
 
 # ─────────────────────────────────────────────
 #  LOGGING
