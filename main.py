@@ -267,8 +267,9 @@ class ForexAIBot:
         self.running     = False
         self.last_train  = {}   # Track last training date per symbol
         self.loss_detector = LossDetector(
-            initial_balance = ACCOUNT_BALANCE,
-            save_path       = "logs/loss_detector_state.json"
+            initial_balance     = ACCOUNT_BALANCE,
+            save_path           = "logs/loss_detector_state.json",
+            base_min_confidence = RUNTIME_CONFIG["min_signal_confidence"],
         )
         self.tracker = PerformanceTracker()
         self.coordinator = TradeCoordinator()

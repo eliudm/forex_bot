@@ -118,12 +118,19 @@ class LossDetector:
     """
 
     def __init__(self, initial_balance: float = 500,
-                 save_path: str = "logs/loss_detector_state.json"):
+                 save_path: str = "logs/loss_detector_state.json",
+                 base_min_confidence: float = 0.55):
+        # base_min_confidence should be config.settings.MIN_SIGNAL_CONFIDENCE
+        # (main.py passes it in) — CAUTION/RECOVERY escalate relative to this
+        # same number, so what main.py's startup banner displays as "the"
+        # confidence threshold is actually the one enforced in NORMAL status,
+        # instead of an unrelated hardcoded value nothing else agreed on.
 
         self.initial_balance = initial_balance
         self.peak_balance    = initial_balance
         self.current_balance = initial_balance
         self.save_path       = save_path
+        self.base_min_confidence = base_min_confidence
 
         # Trade history (keep last 50 trades in memory)
         self.trade_history   = deque(maxlen=50)
@@ -338,25 +345,32 @@ class LossDetector:
         """
         Returns how the bot should adjust its behavior right now.
 
+        min_confidence escalates relative to base_min_confidence (normally
+        config.settings.MIN_SIGNAL_CONFIDENCE) rather than jumping to
+        unrelated fixed numbers, so a change to that setting actually takes
+        effect in every status, not just NORMAL.
+
         RETURNS:
         {
             "can_trade":        True/False,
             "lot_multiplier":   1.0  (0.5 = half size, 0.0 = no trading),
-            "min_confidence":   0.65 (raise to 0.75 in recovery),
+            "min_confidence":   base_min_confidence, +0.03 in CAUTION, +0.10 in RECOVERY,
             "reason":           "explanation",
             "status":           "NORMAL"
         }
         """
+        base = self.base_min_confidence
+
         if self.status == BotStatus.NORMAL:
-            return {"can_trade": True,  "lot_multiplier": 1.00, "min_confidence": 0.65,
+            return {"can_trade": True,  "lot_multiplier": 1.00, "min_confidence": base,
                     "status": "NORMAL", "reason": self.status_reason}
 
         elif self.status == BotStatus.CAUTION:
-            return {"can_trade": True,  "lot_multiplier": 0.75, "min_confidence": 0.68,
+            return {"can_trade": True,  "lot_multiplier": 0.75, "min_confidence": min(base + 0.03, 0.95),
                     "status": "CAUTION", "reason": self.status_reason}
 
         elif self.status == BotStatus.RECOVERY:
-            return {"can_trade": True,  "lot_multiplier": 0.50, "min_confidence": 0.75,
+            return {"can_trade": True,  "lot_multiplier": 0.50, "min_confidence": min(base + 0.10, 0.95),
                     "status": "RECOVERY", "reason": self.status_reason}
 
         elif self.status == BotStatus.PAUSED:
@@ -367,7 +381,7 @@ class LossDetector:
             return {"can_trade": False, "lot_multiplier": 0.00, "min_confidence": 1.00,
                     "status": "EMERGENCY", "reason": self.status_reason}
 
-        return {"can_trade": True, "lot_multiplier": 1.0, "min_confidence": 0.65,
+        return {"can_trade": True, "lot_multiplier": 1.0, "min_confidence": base,
                 "status": "UNKNOWN", "reason": "Unknown status"}
 
     # ─────────────────────────────────────────
