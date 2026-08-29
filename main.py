@@ -292,9 +292,14 @@ class ForexAIBot:
             sys.exit(1)
 
         # Step 3: Initialize AI engines and train models
+        # model_dir is namespaced by broker mode (models/paper/, models/mt5/)
+        # so a model trained on PAPER mode's synthetic data is never silently
+        # reused for MT5 (real money) — and vice versa — after switching
+        # BROKER_MODE. See ai_engine/enhanced_engine.py's model_dir docstring.
+        model_dir = f"models/{RUNTIME_CONFIG['broker_mode'].lower()}"
         for symbol in self.active_symbols:
             logger.info(f"Initializing AI engine for {symbol}...")
-            self.ai_engines[symbol] = EnhancedAIEngine(symbol)
+            self.ai_engines[symbol] = EnhancedAIEngine(symbol, model_dir=model_dir)
 
             # Train if model not already saved
             if not self.ai_engines[symbol].is_trained:

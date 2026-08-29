@@ -79,8 +79,9 @@ logger = logging.getLogger(__name__)
 
 class EnhancedAIEngine:
     """
-    Upgraded AI engine with ensemble models and multi-filter confirmation.
-    Drop-in replacement for AIStrategyEngine.
+    Ensemble AI engine (RandomForest + GradientBoosting + XGBoost) with
+    multi-filter confirmation. The engine both main.py and the backtester
+    use.
     """
 
     def __init__(self, symbol: str, model_dir: str = "models"):
