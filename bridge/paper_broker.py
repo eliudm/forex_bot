@@ -86,7 +86,7 @@ class _SymbolFeed:
         self.rng = np.random.default_rng(seed)
         self.price = base
         self.vol = vol
-        self.bar_time = datetime.utcnow() - timedelta(hours=seed_bars)
+        self.bar_time = datetime.now() - timedelta(hours=seed_bars)
         self.bars = []
         self._advance(seed_bars)
 
@@ -286,7 +286,7 @@ class PaperBroker:
         self.positions[ticket] = {
             "ticket": ticket, "symbol": symbol, "direction": direction,
             "lot": lot, "price": price, "sl": sl, "tp": tp,
-            "comment": comment, "open_time": datetime.utcnow().isoformat(),
+            "comment": comment, "open_time": datetime.now().isoformat(),
         }
         self._save_state()
 
