@@ -1,164 +1,143 @@
-# 🤖 AI Forex Trading Bot — Complete Setup Guide
-## For Beginners | Deriv + MT5 | $500 Account
+# Setup Guide
 
----
+## Fastest path: paper trading (no account needed)
 
-## ⚡ QUICK START (4 Steps)
-
-### Step 1: Install Python
-Download Python 3.10+ from https://python.org/downloads
-- On Windows: tick "Add Python to PATH" during install
-- Test: open Command Prompt and type `python --version`
-
-### Step 2: Install Required Libraries
-Open Command Prompt / Terminal in the bot folder and run:
-```
-pip install MetaTrader5 pandas numpy scikit-learn requests pandas-ta streamlit plotly
-```
-
-### Step 3: Set Up Deriv MT5 Account
-1. Go to https://deriv.com and create a FREE account
-2. Click "Platforms" → "MetaTrader 5" → "Create Account"
-3. Choose "Demo" account first (practice with $10,000 virtual money)
-4. Download and install MT5 from the Deriv page
-5. Log in to MT5 with your Deriv credentials
-6. In MT5, go to "View" → "Market Watch" → right-click → "Show All"
-   (This makes Boom/Crash/Volatility symbols available)
-
-### Step 4: Configure the Bot
-Open `config/config.py` and fill in:
-```python
-MT5_LOGIN    = 12345678        # Your Deriv MT5 account number
-MT5_PASSWORD = "YourPassword"  # Your MT5 password
-MT5_SERVER   = "Deriv-Demo"    # Keep as Demo until ready for live
-```
-
----
-
-## 📱 Set Up Telegram Alerts (Optional but Recommended)
-
-1. Open Telegram → search "@BotFather"
-2. Send: `/newbot`
-3. Choose a name (e.g. "My Forex Bot")
-4. Copy the TOKEN it gives you
-5. Open your new bot, send any message
-6. Visit: `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates`
-7. Find `"chat":{"id":123456789}` — that's your CHAT_ID
-8. Add both to config.py:
-```python
-TELEGRAM_TOKEN   = "7234567890:AAFxxxxxxxxxx"
-TELEGRAM_CHAT_ID = "123456789"
-```
-
----
-
-## 🚀 Running the Bot
-
-### Start the bot:
-```
+```bash
+pip install -r requirements.txt
 python main.py
 ```
-The bot will:
-1. Connect to your MT5 account
-2. Ask which markets you want to scan
-3. Scan for signals every 5 minutes
-4. Send Telegram alert when a signal is found
-5. Wait for your APPROVE/REJECT (in SEMI_AUTO mode)
 
-### Start the dashboard:
-```
-streamlit run dashboard/app.py
-```
-Open http://localhost:8501 in your browser.
+`config/settings.py` defaults to `BROKER_MODE = "PAPER"`, which uses a
+simulated broker (`bridge/paper_broker.py`) with synthetic price data — no
+Deriv account, no MetaTrader install, nothing to configure. This is enough
+to see the full pipeline (signal → risk check → trade → close → performance
+tracking) actually run. It is **not** live market data — treat any paper
+results as a pipeline smoke test, not a performance claim.
 
-### Run a backtest:
+Pick your markets and execution mode at the prompts, or skip them for
+scripted/automated runs:
+
+```bash
+BOT_MARKETS=EURUSD,XAUUSD BOT_MAX_SCANS=5 python main.py
 ```
+
+## Backtesting
+
+```bash
 python backtest/run_backtest.py
 ```
 
----
+Runs the strategy against synthetic historical data for a handful of
+symbols and prints win rate, profit factor, max drawdown, and Sharpe ratio
+for each. Past performance — backtested or live — never guarantees future
+results.
 
-## 📊 Understanding the Bot's Decisions
+## Going live: Deriv MT5 account
 
-### AI Confidence Score
-- 65-70%: Acceptable signal (minimum threshold)
-- 70-80%: Good signal
-- 80-90%: Strong signal
-- 90%+:   Very high confidence (rare)
+Only do this after you're comfortable with how the bot behaves in paper
+mode.
 
-### Risk per Trade on $500
-| Risk % | Dollar Risk | Reward (2:1 R:R) |
-|--------|-------------|------------------|
-| 1%     | $5          | $10              |
-| 0.5%   | $2.50       | $5               |
-| 2%     | $10         | $20              |
+### 1. Create a Deriv account and demo MT5 login
+1. Go to <https://deriv.com> and create a free account, verify your email.
+2. In your Deriv dashboard, open **DMT5 / Deriv MT5** and create a demo
+   account (Financial, for Forex/Gold; Synthetic Indices, for
+   Boom/Crash/Volatility symbols — you can create both).
+3. Note the **login number**, **password**, and **server** (e.g.
+   `Deriv-Demo`) it gives you.
 
-### Symbol Names in Deriv MT5
-| What You Know | Deriv MT5 Symbol Name |
-|--------------|----------------------|
-| Gold         | XAUUSD               |
-| EUR/USD      | EURUSD               |
-| GBP/USD      | GBPUSD               |
-| Volatility 75| Volatility 75 Index  |
-| Boom 1000    | Boom 1000 Index      |
-| Crash 1000   | Crash 1000 Index     |
+### 2. Install MetaTrader 5
+1. Download from <https://www.metatrader5.com/en/download> (Windows —
+   the `MetaTrader5` Python package only works on Windows).
+2. Open MT5, **File → Login to Trade Account**, and log in with the
+   credentials from step 1.
+3. Press `Ctrl+M` for Market Watch, right-click → **Show All** so
+   Boom/Crash/Volatility/Step/Jump symbols are visible — the bot can't
+   fetch data for a symbol that isn't in Market Watch.
 
----
-
-## ⚠️ IMPORTANT WARNINGS
-
-1. **ALWAYS test on a DEMO account first** (at least 2-4 weeks)
-2. **Never risk money you cannot afford to lose**
-3. **The bot is NOT 100% accurate** — no bot is
-4. **Start with minimum lot sizes** (0.01 lots)
-5. **Watch the daily loss limit** (set at 3% = $15/day)
-6. **Synthetic indices trade 24/7** — the bot can run overnight
-
----
-
-## 🛠 File Structure
-```
-forex_bot/
-├── main.py              ← START HERE — runs the bot
-├── config/config.py     ← All settings (fill in your details)
-├── ai_engine/
-│   ├── indicators.py    ← Calculates RSI, MACD, ATR, etc.
-│   └── strategy_engine.py ← AI picks the best strategy
-├── bridge/
-│   └── mt5_connector.py ← Connects to MetaTrader 5
-├── strategies/
-│   └── strategy_library.py ← All 5 trading strategies
-├── risk/
-│   └── risk_manager.py  ← Protects your account
-├── alerts/
-│   └── telegram_alerts.py ← Sends you Telegram messages
-├── backtest/
-│   └── backtest_engine.py ← Test on historical data
-├── dashboard/
-│   └── app.py           ← Web monitoring dashboard
-└── SETUP_GUIDE.md       ← This file
+### 3. Install Python dependencies
+```bash
+pip install -r requirements.txt
+pip install MetaTrader5
 ```
 
----
+### 4. Configure credentials
+Copy `.env.example` to `.env` and fill in your details — **never** put
+credentials directly in `config/settings.py`; `.env` is gitignored
+specifically so secrets never end up in git history:
 
-## 🆘 Common Problems & Fixes
+```
+MT5_LOGIN=12345678
+MT5_PASSWORD=your_password
+MT5_SERVER=Deriv-Demo
+```
 
-**"MT5 not installed" error**
-→ Install from: https://www.metatrader5.com/en/download
-→ MT5 Python library only works on Windows
+Then set `BROKER_MODE = "MT5"` in `config/settings.py`.
 
-**"Cannot connect to Deriv-Demo"**
-→ Make sure MT5 app is open and logged in first
-→ Check your login/password/server in config.py
+### 5. Run it
+```bash
+python main.py
+```
+Start with `EXECUTION_MODE = "SEMI_AUTO"` (in `config/settings.py`) so you
+approve every trade before it fires. Only move to `FULL_AUTO` after
+watching it run correctly on demo for a meaningful stretch of time.
 
-**"No candle data for symbol"**
-→ In MT5: View → Market Watch → right-click → Show All
-→ The symbol must be visible in Market Watch
+## Telegram alerts (optional)
 
-**"Telegram not configured"**
-→ Add your TOKEN and CHAT_ID to config.py
-→ In SEMI_AUTO mode without Telegram, bot logs signals to console
+1. Open Telegram, message **@BotFather**, send `/newbot`, follow the
+   prompts, and copy the token it gives you.
+2. Message your new bot once (anything).
+3. Visit `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates` and find
+   `"chat":{"id": ...}` — that's your chat ID.
+4. Add both to `.env`:
+   ```
+   TELEGRAM_TOKEN=7234567890:AAFxxxxxxxxxxxxxxxxxxxx
+   TELEGRAM_CHAT_ID=123456789
+   ```
+   Telegram alerts turn on automatically once both are set.
 
----
+## Dashboard
 
-*Built for Deriv.com | MT5 Platform | Version 1.0*
+```bash
+python dashboard/server.py
+```
+Open <http://localhost:5000>. It reads real state from `logs/` (the loss
+detector's state file, the signal file the bot writes each scan) — it
+shows nothing until the bot has actually run.
+
+## Understanding confidence and risk
+
+| AI Confidence | Meaning                          |
+|---------------|-----------------------------------|
+| < 55%         | Below the live default threshold — WAIT |
+| 55-70%        | Acceptable signal                 |
+| 70-85%        | Good signal                       |
+| 85%+          | Strong signal (rare)               |
+
+Risk per trade on a $10,000 paper balance at the default 1% risk setting:
+
+| Risk % | Dollar Risk | Reward at 2:1 R:R |
+|--------|-------------|--------------------|
+| 0.5%   | $50         | $100                |
+| 1%     | $100        | $200                |
+| 2%     | $200        | $400                |
+
+## Common problems
+
+**"Could not connect to the broker" in MT5 mode**
+→ Make sure MT5 is open and logged in, and that `.env` has the right
+login/password/server (check the exact spelling of `MT5_SERVER`).
+
+**"No data for <symbol>"**
+→ In MT5: View → Market Watch → right-click → Show All. The symbol must
+be visible in Market Watch.
+
+**Telegram messages aren't sending**
+→ Check `TELEGRAM_TOKEN`/`TELEGRAM_CHAT_ID` in `.env`. With neither set,
+alerts print a preview to the console instead of sending — that's
+expected, not a bug.
+
+**Console crashes with `UnicodeEncodeError`**
+→ Should not happen anymore (`main.py` and `backtest/run_backtest.py`
+reconfigure stdout to UTF-8 on startup) — if you hit this in another
+script, it's the same root cause: emoji output on a non-UTF-8 Windows
+console codepage.
