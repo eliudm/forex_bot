@@ -28,28 +28,37 @@ def generate_sample_data(n=800, symbol="XAUUSD"):
                          "low":close-np.abs(rng.normal(0,spread)),"close":close,
                          "volume":rng.integers(100,5000,n).astype(float)})
 
-symbols = ["XAUUSD","EURUSD","GBPUSD","Volatility 75 Index","Boom 1000 Index"]
-results_all = []
-print("\n" + "="*60)
-print("  BACKTEST SUITE - FOREX AI BOT (Simulated Data)")
-print("="*60)
-for sym in symbols:
-    print(f"\n  Testing {sym}...")
-    df = generate_sample_data(800, sym)
-    bt = Backtester(symbol=sym, initial_balance=500, risk_pct=0.01)
-    bt.load_data(df)
-    r = bt.run(train_pct=0.70)
-    if "error" not in r:
-        bt.print_report(r)
-        results_all.append(r)
-    else:
-        print(f"  [!] {r['error']} (model wasn't confident enough on this run - expected sometimes on synthetic data)")
-
-if results_all:
+def main():
+    symbols = ["XAUUSD", "EURUSD", "GBPUSD", "Volatility 75 Index", "Boom 1000 Index"]
+    results_all = []
     print("\n" + "="*60)
-    print("  SUMMARY")
-    print(f"  {'Symbol':<25} {'Win%':>6} {'PF':>6} {'Return%':>9} {'MaxDD%':>7}")
-    print("  " + "─"*55)
-    for r in results_all:
-        print(f"  {r['symbol']:<25} {r['win_rate']:>5.1f}% {r['profit_factor']:>6.2f} {r['total_return_pct']:>+8.1f}% {r['max_drawdown_pct']:>6.1f}%")
+    print("  BACKTEST SUITE - FOREX AI BOT (Simulated Data)")
     print("="*60)
+    for sym in symbols:
+        print(f"\n  Testing {sym}...")
+        df = generate_sample_data(800, sym)
+        bt = Backtester(symbol=sym, initial_balance=500, risk_pct=0.01)
+        bt.load_data(df)
+        r = bt.run(train_pct=0.70)
+        if "error" not in r:
+            bt.print_report(r)
+            results_all.append(r)
+        else:
+            print(f"  [!] {r['error']} (model wasn't confident enough on this run - expected sometimes on synthetic data)")
+
+    if results_all:
+        print("\n" + "="*60)
+        print("  SUMMARY")
+        print(f"  {'Symbol':<25} {'Win%':>6} {'PF':>6} {'Return%':>9} {'MaxDD%':>7}")
+        print("  " + "─"*55)
+        for r in results_all:
+            print(f"  {r['symbol']:<25} {r['win_rate']:>5.1f}% {r['profit_factor']:>6.2f} {r['total_return_pct']:>+8.1f}% {r['max_drawdown_pct']:>6.1f}%")
+        print("="*60)
+
+
+# Guarded so importing this module (tests/test_backtester.py imports
+# generate_sample_data from it) doesn't also run the full 5-symbol demo
+# suite as a side effect — that used to make every test collection take
+# several extra minutes.
+if __name__ == "__main__":
+    main()
