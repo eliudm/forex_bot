@@ -62,9 +62,44 @@ class MT5Bridge:
         bridge.disconnect()           # Log out when done
     """
 
+    MAGIC = 20240101
+
     def __init__(self):
         self.connected = False
+        self._last_history_check = datetime.now()
         logger.info("MT5Bridge created. Call connect() to log in.")
+
+    # ─────────────────────────────────────────
+    #  ADVANCE / DETECT CLOSED TRADES
+    #  Called once per scan cycle by the bot loop. Live prices move on
+    #  their own, so this only needs to check for trades that closed
+    #  (hit SL/TP or were closed manually) since the last check.
+    # ─────────────────────────────────────────
+    def tick(self):
+        pass
+
+    def get_closed_trades(self) -> list:
+        """Returns trades (placed by this bot, via magic number) closed since the last call."""
+        now = datetime.now()
+        deals = mt5.history_deals_get(self._last_history_check, now)
+        self._last_history_check = now
+
+        if not deals:
+            return []
+
+        closures = []
+        for d in deals:
+            if d.magic != self.MAGIC or d.entry != 1:  # entry==1 -> DEAL_ENTRY_OUT (closing deal)
+                continue
+            closures.append({
+                "ticket":     d.position_id,
+                "symbol":     d.symbol,
+                "direction":  "SELL" if d.type == mt5.ORDER_TYPE_BUY else "BUY",  # closing side is inverse
+                "profit":     round(d.profit, 2),
+                "exit_price": d.price,
+                "reason":     "TP/SL/MANUAL",
+            })
+        return closures
 
     # ─────────────────────────────────────────
     #  CONNECT TO MT5
@@ -279,7 +314,7 @@ class MT5Bridge:
             "sl":          sl,
             "tp":          tp,
             "deviation":   10,               # Allow up to 10 points slippage
-            "magic":       20240101,         # Unique ID to identify our bot's trades
+            "magic":       self.MAGIC,         # Unique ID to identify our bot's trades
             "comment":     comment,
             "type_time":   mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_RETURN,
@@ -368,7 +403,7 @@ class MT5Bridge:
             "position":  ticket,
             "price":     close_price,
             "deviation": 10,
-            "magic":     20240101,
+            "magic":     self.MAGIC,
             "comment":   "AI_BOT_CLOSE",
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_RETURN,
