@@ -77,6 +77,7 @@ from ai_engine.risk_manager import RiskManager
 from ai_engine.loss_detector import LossDetector, BotStatus
 from ai_engine.enhanced_engine import EnhancedAIEngine
 from ai_engine.performance_tracker import PerformanceTracker
+from agents.coordinator import TradeCoordinator, format_breakdown
 
 # Optional Telegram alerts
 if TELEGRAM_ENABLED:
@@ -206,10 +207,10 @@ def ask_which_markets() -> list:
 # ═══════════════════════════════════════════════════════════════
 #  SEMI-AUTO APPROVAL PROMPT
 # ═══════════════════════════════════════════════════════════════
-def ask_approval(symbol: str, signal: dict, risk_check: dict) -> bool:
+def ask_approval(symbol: str, signal: dict, risk_check: dict, agent_breakdown: str = "") -> bool:
     """
     In SEMI_AUTO mode, asks the user to approve or reject a signal.
-    
+
     Displays all signal details and waits for Y/N input.
     """
     action     = signal['action']
@@ -231,6 +232,8 @@ def ask_approval(symbol: str, signal: dict, risk_check: dict) -> bool:
     print(f"  Take Profit:  {tp}")
     print(f"  R:R Ratio  :  1:{rr}")
     print(f"  Risk Amount:  ${risk_amt:.2f}")
+    if agent_breakdown:
+        print(f"  Agents     :  {agent_breakdown}")
     print("─"*55)
 
     choice = input("  APPROVE? [Y = Yes / N = No]: ").strip().upper()
@@ -268,6 +271,7 @@ class ForexAIBot:
             save_path       = "logs/loss_detector_state.json"
         )
         self.tracker = PerformanceTracker()
+        self.coordinator = TradeCoordinator()
 
     # ─────────────────────────────────────────
     #  STARTUP
@@ -402,8 +406,14 @@ class ForexAIBot:
         # Step 2: Calculate indicators
         df = self.indicators.add_all(df)
 
-        # Step 3: Get AI signal
-        signal = self.ai_engines[symbol].predict(df, min_conf)
+        # Step 3: Run the agent pipeline — scanner pre-filter, setup (AI
+        # model), then sentiment/on-chain adjustment. See agents/coordinator.py.
+        decision        = self.coordinator.decide(symbol, df, self.ai_engines[symbol], min_conf)
+        signal          = decision["signal"]
+        agent_breakdown = format_breakdown(decision["agents"]) if len(decision["agents"]) > 1 else ""
+
+        if agent_breakdown:
+            logger.debug(f"  {symbol} agents: {agent_breakdown}")
 
         # Write signal to file so dashboard can read it
         self._write_signal(symbol, signal)
@@ -428,7 +438,7 @@ class ForexAIBot:
 
         # Step 6: Execute trade based on mode (read live so dashboard mode changes apply)
         if settings.EXECUTION_MODE == "SEMI_AUTO":
-            approved = ask_approval(symbol, signal, risk_check)
+            approved = ask_approval(symbol, signal, risk_check, agent_breakdown)
             if not approved:
                 logger.info(f"  {symbol}: Trade rejected by user.")
                 return
