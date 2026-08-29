@@ -38,6 +38,14 @@
 import time
 import logging
 import sys
+
+# Console output below uses emoji/box-drawing characters. On Windows, the
+# default console codepage (cp1252) can't encode them and print() crashes
+# unless PYTHONUTF8=1 is set first (as start_bot.bat does) — reconfigure
+# here too so `python main.py` works even without that wrapper.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 import os
 from datetime import datetime
 

@@ -48,7 +48,11 @@ class Backtester:
     """
 
     def __init__(self, symbol: str, initial_balance: float = 500,
-                 risk_pct: float = 0.01, min_confidence: float = 0.65):
+                 risk_pct: float = 0.01, min_confidence: float = 0.45):
+        # NOTE: 0.45, not the ~0.65 the live bot defaults to. A model trained on
+        # a few hundred candles of synthetic/random-walk data rarely reaches
+        # 65%+ confidence, which made backtests silently produce zero trades.
+        # Live trading should still use a stricter threshold (config/settings.py).
         self.symbol          = symbol
         self.initial_balance = initial_balance
         self.risk_pct        = risk_pct
