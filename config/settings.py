@@ -125,8 +125,12 @@ TELEGRAM_ENABLED = bool(TELEGRAM_TOKEN and TELEGRAM_CHAT_ID)
 #              deliberately, once you trust it, not by inheriting a
 #              risky default
 #  FULL_AUTO = bot trades automatically with no human in the loop
+#  Override with BOT_EXECUTION_MODE=FULL_AUTO for non-interactive runs —
+#  SEMI_AUTO's approval prompt calls input(), which hangs in CI/automation.
 # ─────────────────────────────────────────────
-EXECUTION_MODE = "SEMI_AUTO"
+EXECUTION_MODE = os.environ.get("BOT_EXECUTION_MODE", "SEMI_AUTO")
+if EXECUTION_MODE not in ("SEMI_AUTO", "FULL_AUTO"):
+    EXECUTION_MODE = "SEMI_AUTO"
 
 # ─────────────────────────────────────────────
 #  LOGGING
