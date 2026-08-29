@@ -21,8 +21,17 @@
   7. Monitors open trades
   8. Logs everything
 
+  BROKER_MODE (config/settings.py, default "PAPER"):
+    PAPER = simulated broker, runs immediately, no account needed
+    MT5   = real Deriv MT5 account (needs MetaTrader5 installed + .env)
+
+  TESTING / AUTOMATION HOOKS (env vars, all optional):
+    BOT_MARKETS=EURUSD,XAUUSD   skip the market-selection prompt
+    BOT_MAX_SCANS=5             exit automatically after N scans
+    BOT_SCAN_INTERVAL_SEC=2     shorten the between-scan wait (default 300)
+
   TO START THE BOT:
-      python main_bot.py
+      python main.py
 =============================================================
 """
 
@@ -47,17 +56,15 @@ logger = logging.getLogger("MainBot")
 # ── Import all modules ───────────────────────────────────────
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from config.compat import get_runtime_config
+import config.settings as settings
 from config.settings import (
-    MARKETS, ACCOUNT_BALANCE, RISK_PER_TRADE_PCT,
-    MAX_OPEN_TRADES, DAILY_LOSS_LIMIT_PCT, MIN_REWARD_RISK_RATIO,
-    PRIMARY_TIMEFRAME, LOOKBACK_CANDLES, MIN_SIGNAL_CONFIDENCE,
-    EXECUTION_MODE, RETRAIN_EVERY_DAYS, TELEGRAM_ENABLED
+    ACCOUNT_BALANCE, RISK_PER_TRADE_PCT, PRIMARY_TIMEFRAME,
+    LOOKBACK_CANDLES, RETRAIN_EVERY_DAYS, TELEGRAM_ENABLED
 )
 
 RUNTIME_CONFIG = get_runtime_config()
-from bridge.mt5_bridge      import MT5Bridge
+from bridge                 import get_bridge
 from ai_engine.indicators   import IndicatorEngine
-from ai_engine.strategy_engine import AIStrategyEngine
 from ai_engine.risk_manager import RiskManager
 from ai_engine.loss_detector import LossDetector, BotStatus
 from ai_engine.enhanced_engine import EnhancedAIEngine
@@ -65,8 +72,8 @@ from ai_engine.performance_tracker import PerformanceTracker
 
 # Optional Telegram alerts
 if TELEGRAM_ENABLED:
-    from alerts.telegram_alerts import TelegramAlerter
-    alerter = TelegramAlerter()
+    from alerts.telegram_alerts import TelegramAlerts
+    alerter = TelegramAlerts()
 else:
     alerter = None
 
@@ -78,7 +85,16 @@ def ask_which_markets() -> list:
     """
     Displays an interactive menu asking which markets to trade.
     Returns a list of enabled symbol names.
+
+    Set BOT_MARKETS (comma-separated symbols) to skip the prompt —
+    used for automated runs and testing.
     """
+    env_markets = os.environ.get("BOT_MARKETS")
+    if env_markets:
+        selected = [s.strip() for s in env_markets.split(",") if s.strip()]
+        logger.info(f"BOT_MARKETS set — skipping menu. Markets: {', '.join(selected)}")
+        return selected
+
     all_markets = {
         # FOREX
         "1":  ("EURUSD",               "Forex     - EUR/USD (most liquid)"),
@@ -226,7 +242,7 @@ class ForexAIBot:
     """
 
     def __init__(self):
-        self.bridge       = MT5Bridge()
+        self.bridge       = get_bridge()
         self.indicators   = IndicatorEngine()
         self.risk_manager = RiskManager(
             balance       = RUNTIME_CONFIG["account_balance"],
@@ -254,12 +270,12 @@ class ForexAIBot:
         # Step 1: Ask which markets to trade
         self.active_symbols = ask_which_markets()
 
-        # Step 2: Connect to MT5
-        logger.info("Connecting to Deriv MT5...")
+        # Step 2: Connect to the broker (PaperBroker or MT5Bridge, per BROKER_MODE)
+        logger.info(f"Connecting ({RUNTIME_CONFIG['broker_mode']} mode)...")
         if not self.bridge.connect():
-            logger.error("❌ Cannot connect to MT5. Please check:")
-            logger.error("   1. MetaTrader 5 is installed and running")
-            logger.error("   2. Your credentials in config/settings.py are correct")
+            logger.error("❌ Could not connect to the broker. Please check:")
+            logger.error("   1. MetaTrader 5 is installed and running (BROKER_MODE=MT5 only)")
+            logger.error("   2. Your credentials in .env are correct")
             sys.exit(1)
 
         # Step 3: Initialize AI engines and train models
@@ -281,6 +297,9 @@ class ForexAIBot:
         logger.info(f"  Confidence threshold: {RUNTIME_CONFIG['min_signal_confidence']:.0%} | Retrain every {RUNTIME_CONFIG['retrain_every_days']} days")
         logger.info(f"  Workspace: {RUNTIME_CONFIG['workspace_root']}")
         logger.info("="*55 + "\n")
+
+        if alerter:
+            alerter.send_bot_started(RUNTIME_CONFIG['execution_mode'], self.active_symbols)
 
     # ─────────────────────────────────────────
     #  TRAIN A MODEL
@@ -353,8 +372,8 @@ class ForexAIBot:
             self._train_model(symbol)
             self.loss_detector.acknowledge_retrain()
 
-        # Use loss-detector-adjusted confidence threshold
-        min_conf = 0.40
+        # Use loss-detector-adjusted confidence threshold (raised in RECOVERY, etc.)
+        min_conf = adj["min_confidence"]
 
         logger.info(f"Processing {symbol}... [Status: {adj['status']} | Size: ×{adj['lot_multiplier']} | Min conf: {min_conf:.0%}]")
 
@@ -399,8 +418,8 @@ class ForexAIBot:
             logger.info(f"  {symbol}: Trade blocked — {risk_check['reason']}")
             return
 
-        # Step 6: Execute trade based on mode
-        if EXECUTION_MODE == "SEMI_AUTO":
+        # Step 6: Execute trade based on mode (read live so dashboard mode changes apply)
+        if settings.EXECUTION_MODE == "SEMI_AUTO":
             approved = ask_approval(symbol, signal, risk_check)
             if not approved:
                 logger.info(f"  {symbol}: Trade rejected by user.")
@@ -430,8 +449,15 @@ class ForexAIBot:
 
         if trade:
             logger.info(f"  ✅ Trade opened: {symbol} {signal['action']} {lot} lots")
+            self.tracker.record_open(
+                ticket     = trade['ticket'], symbol = symbol,
+                direction  = signal['action'], entry = trade['price'],
+                sl         = trade['sl'], tp = trade['tp'], lot = lot,
+                confidence = signal['confidence'], strategy = signal['strategy'],
+                regime     = signal.get('regime', 'N/A'),
+            )
             if alerter:
-                alerter.send_trade_alert(symbol, signal, lot, trade)
+                alerter.send_trade_opened(trade)
         else:
             logger.error(f"  ❌ Trade failed for {symbol}")
 
@@ -487,27 +513,60 @@ class ForexAIBot:
                 emoji = "🚨" if result['new_status'] in ("PAUSED","EMERGENCY") else "⚠️"
                 alerter.send(f"{emoji} Bot status: {result['new_status']}\n{result['reason']}")
 
+    def _process_closed_trades(self):
+        """
+        Advances the broker by one tick (moves simulated time forward for
+        PaperBroker; checks trade history for MT5Bridge) and feeds any
+        newly-closed trades into risk tracking, the loss detector, the
+        performance tracker, and Telegram.
+        """
+        self.bridge.tick()
+        for closure in self.bridge.get_closed_trades():
+            profit = closure["profit"]
+            logger.info(f"  Trade closed: {closure['symbol']} #{closure['ticket']} "
+                        f"${profit:+.2f} ({closure.get('reason', '')})")
+
+            self.risk_manager.record_trade_result(profit)
+            self.tracker.record_close(
+                ticket=closure["ticket"],
+                exit_price=closure.get("exit_price", 0),
+                profit=profit,
+            )
+            self.on_trade_closed(closure["symbol"], profit)
+
+            if alerter:
+                alerter.send_trade_closed({**closure, "close_reason": closure.get("reason", "TP/SL Hit")})
+
     # ─────────────────────────────────────────
     #  MAIN LOOP
     # ─────────────────────────────────────────
     def run(self):
         """
-        The main trading loop. Runs forever until you press Ctrl+C.
-        Analyzes each market every hour.
+        The main trading loop. Runs until you press Ctrl+C (or, if
+        BOT_MAX_SCANS is set, until that many scans have run — used for
+        automated testing).
         """
         self.startup()
         self.running = True
+
+        max_scans     = int(os.environ.get("BOT_MAX_SCANS", "0") or "0")
+        scan_interval = int(os.environ.get("BOT_SCAN_INTERVAL_SEC", "300") or "300")
+        scan_count    = 0
 
         logger.info("Starting main trading loop. Press Ctrl+C to stop.\n")
 
         while self.running:
             try:
+                scan_count += 1
                 logger.info(f"\n{'='*50}")
-                logger.info(f"  SCAN @ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                logger.info(f"  SCAN #{scan_count} @ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
                 logger.info(f"{'='*50}")
 
                 # Check for dashboard control signals
                 self._check_control_file()
+
+                # Advance the broker and settle any trades that closed
+                self._process_closed_trades()
 
                 # Process each active symbol
                 for symbol in self.active_symbols:
@@ -517,9 +576,14 @@ class ForexAIBot:
                 stats = self.risk_manager.get_daily_stats()
                 logger.info(f"Today: {stats['total_trades']} trades | Wins: {stats['wins']} | Losses: {stats['losses']} | P&L: ${stats['total_pnl']:.2f}")
 
-                # Wait 1 hour before next scan
-                logger.info("Next scan in 5 minutes...")
-                time.sleep(300)
+                if max_scans and scan_count >= max_scans:
+                    logger.info(f"BOT_MAX_SCANS={max_scans} reached. Stopping.")
+                    self.running = False
+                    break
+
+                # Wait before next scan
+                logger.info(f"Next scan in {scan_interval} seconds...")
+                time.sleep(scan_interval)
 
             except KeyboardInterrupt:
                 logger.info("\n  Bot stopped by user.")
@@ -527,8 +591,8 @@ class ForexAIBot:
 
             except Exception as e:
                 logger.error(f"  Unexpected error: {e}", exc_info=True)
-                logger.info("  Waiting 5 minutes before retrying...")
-                time.sleep(300)
+                logger.info(f"  Waiting {scan_interval} seconds before retrying...")
+                time.sleep(scan_interval)
 
         # Cleanup
         self.bridge.disconnect()
