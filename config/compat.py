@@ -18,6 +18,7 @@ try:
         EXECUTION_MODE,
         RETRAIN_EVERY_DAYS,
         TELEGRAM_ENABLED,
+        BROKER_MODE,
     )
 except Exception:  # pragma: no cover - fallback for local/dev use
     ACCOUNT_BALANCE = 10000
@@ -31,6 +32,7 @@ except Exception:  # pragma: no cover - fallback for local/dev use
     EXECUTION_MODE = "FULL_AUTO"
     RETRAIN_EVERY_DAYS = 7
     TELEGRAM_ENABLED = False
+    BROKER_MODE = "PAPER"
 
 
 def get_runtime_config() -> Dict[str, Any]:
@@ -47,5 +49,6 @@ def get_runtime_config() -> Dict[str, Any]:
         "execution_mode": EXECUTION_MODE,
         "retrain_every_days": int(RETRAIN_EVERY_DAYS),
         "telegram_enabled": bool(TELEGRAM_ENABLED),
+        "broker_mode": BROKER_MODE,
         "workspace_root": os.path.abspath(os.path.dirname(os.path.dirname(__file__))),
     }

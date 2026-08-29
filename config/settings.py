@@ -4,15 +4,35 @@
 =============================================================
   Edit this file to customize the bot.
   ALL settings are here in one place.
+
+  Secrets (MT5 login, Telegram token) are NOT stored here.
+  Copy .env.example to .env and fill them in there instead —
+  .env is gitignored so they never end up in source control.
 =============================================================
 """
 
+import os
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 # ─────────────────────────────────────────────
-#  DERIV MT5 LOGIN CREDENTIALS
+#  BROKER MODE
+#  PAPER = simulated broker, no account needed (default — just works)
+#  MT5   = real Deriv MT5 account via the MetaTrader5 terminal
 # ─────────────────────────────────────────────
-MT5_LOGIN    = 6111702
-MT5_PASSWORD = "Cdr40bips@"
-MT5_SERVER   = "Deriv-Demo"
+BROKER_MODE = os.environ.get("BROKER_MODE", "PAPER").upper()
+
+# ─────────────────────────────────────────────
+#  DERIV MT5 LOGIN CREDENTIALS (only used when BROKER_MODE = "MT5")
+#  Set these in a .env file — see .env.example
+# ─────────────────────────────────────────────
+MT5_LOGIN    = int(os.environ.get("MT5_LOGIN", "0") or "0")
+MT5_PASSWORD = os.environ.get("MT5_PASSWORD", "")
+MT5_SERVER   = os.environ.get("MT5_SERVER", "Deriv-Demo")
 
 # ─────────────────────────────────────────────
 #  ALL AVAILABLE MARKETS
@@ -93,10 +113,11 @@ LOOKBACK_CANDLES      = 200
 
 # ─────────────────────────────────────────────
 #  TELEGRAM ALERTS
+#  Set TELEGRAM_TOKEN and TELEGRAM_CHAT_ID in .env to enable.
 # ─────────────────────────────────────────────
-TELEGRAM_ENABLED = False
-TELEGRAM_TOKEN   = "your_telegram_bot_token"
-TELEGRAM_CHAT_ID = "your_chat_id"
+TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+TELEGRAM_ENABLED = bool(TELEGRAM_TOKEN and TELEGRAM_CHAT_ID)
 
 # ─────────────────────────────────────────────
 #  EXECUTION MODE
