@@ -30,6 +30,7 @@ import os
 # Add parent folder to path so we can import settings
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.settings import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
+from utils.market_specs import pip_size
 
 # Set up logging - this creates readable log messages
 logger = logging.getLogger(__name__)
@@ -256,14 +257,26 @@ class MT5Bridge:
             logger.error(f"Symbol info not found for {symbol}")
             return 0.01  # Minimum fallback
 
-        risk_amount = balance * risk_pct          # e.g., $500 * 0.01 = $5
-        pip_value   = info.trade_tick_value        # Value of 1 pip in USD
-        
-        if pip_value == 0 or sl_pips == 0:
+        risk_amount = balance * risk_pct           # e.g., $500 * 0.01 = $5
+
+        # info.trade_tick_value is the $ value of ONE TICK (the broker's
+        # minimum price increment) per lot — NOT one pip. On a 5-digit-quoted
+        # forex symbol, 1 pip = 10 ticks, so using tick_value directly here
+        # used to undercount pip value by ~10x, which INFLATED every computed
+        # lot size by ~10x (risking roughly 10x the intended amount per
+        # trade). Convert tick value to pip value using the broker's own
+        # tick size, scaled to our pip convention (utils/market_specs.py) —
+        # the same one the AI engine used to compute sl_pips in the first
+        # place, so units actually match on both sides of this formula.
+        tick_value = info.trade_tick_value
+        tick_size  = info.trade_tick_size
+
+        if tick_value == 0 or tick_size == 0 or sl_pips == 0:
             return info.volume_min                 # Return minimum lot
 
+        pip_value = tick_value * (pip_size(symbol) / tick_size)
         lot = risk_amount / (sl_pips * pip_value)
-        
+
         # Round to broker's allowed lot step
         lot_step = info.volume_step
         lot = round(round(lot / lot_step) * lot_step, 2)
