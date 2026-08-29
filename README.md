@@ -31,6 +31,10 @@ before ever pointing this at a live account.
   symbol, strategy, session, and market regime
 - Optionally sends Telegram alerts, including approve/reject buttons for
   semi-automatic mode
+- Runs the signal through a small agent pipeline (`agents/`) — a
+  volatility-based scanner, the AI model, and pluggable (off by default)
+  sentiment/on-chain agents — coordinated by confidence-weighted scoring
+  rather than a black box; see `agents/coordinator.py` for exactly how
 
 ## Project structure
 ```text
