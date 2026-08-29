@@ -288,6 +288,43 @@ class MT5Bridge:
         return lot
 
     # ─────────────────────────────────────────
+    #  ENFORCE BROKER'S MINIMUM STOP DISTANCE
+    # ─────────────────────────────────────────
+    def _enforce_min_stop_distance(self, symbol: str, direction: str,
+                                    price: float, sl: float, tp: float):
+        """
+        Brokers reject orders whose SL/TP sit closer to the entry price than
+        their minimum allowed stop distance (SYMBOL_TRADE_STOPS_LEVEL, in
+        points). The AI engine computes SL/TP purely from ATR and has no way
+        to know this broker-specific limit, so a tight-ATR moment on a
+        symbol with a wide minimum distance would otherwise get silently
+        rejected by the broker. Widen (never tighten) SL/TP just enough to
+        clear the minimum, and log it — this can only make a trade's risk
+        larger than requested, never smaller, so it fails safe rather than
+        placing a trade with no real stop at all.
+        """
+        info = mt5.symbol_info(symbol)
+        if info is None or not getattr(info, "trade_stops_level", 0):
+            return sl, tp
+
+        min_distance = info.trade_stops_level * info.point
+        sl_dist = abs(price - sl)
+        tp_dist = abs(price - tp)
+
+        if sl_dist >= min_distance and tp_dist >= min_distance:
+            return sl, tp
+
+        logger.warning(f"{symbol}: SL/TP closer than broker's minimum stop "
+                        f"distance ({min_distance:.5f}) — widening to comply.")
+        if direction == "BUY":
+            sl = min(sl, price - min_distance) if sl_dist < min_distance else sl
+            tp = max(tp, price + min_distance) if tp_dist < min_distance else tp
+        else:
+            sl = max(sl, price + min_distance) if sl_dist < min_distance else sl
+            tp = min(tp, price - min_distance) if tp_dist < min_distance else tp
+        return sl, tp
+
+    # ─────────────────────────────────────────
     #  PLACE A TRADE
     # ─────────────────────────────────────────
     def place_trade(self, symbol: str, direction: str, lot: float,
@@ -316,6 +353,8 @@ class MT5Bridge:
         else:
             price      = price_info["bid"]
             order_type = mt5.ORDER_TYPE_SELL
+
+        sl, tp = self._enforce_min_stop_distance(symbol, direction, price, sl, tp)
 
         # Build the trade request
         request = {
