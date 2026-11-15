@@ -102,6 +102,24 @@ class EnhancedAIEngine:
         os.makedirs(model_dir, exist_ok=True)
         self._load_model()
 
+    def _load_model(self):
+        """Load persisted model artifacts if they exist; otherwise leave the engine untrained."""
+        try:
+            if os.path.exists(self.model_path):
+                with open(self.model_path, "rb") as f:
+                    self.model = pickle.load(f)
+            if os.path.exists(self.scaler_path):
+                with open(self.scaler_path, "rb") as f:
+                    self.scaler = pickle.load(f)
+            if os.path.exists(self.feat_path):
+                with open(self.feat_path, "rb") as f:
+                    self.features = pickle.load(f)
+            if self.model is not None:
+                self.is_trained = True
+        except Exception as exc:
+            logger.warning(f"Could not load persisted model for {self.symbol}: {exc}")
+            self.is_trained = False
+
     # ─────────────────────────────────────────
     #  ALL FEATURES
     # ─────────────────────────────────────────
@@ -159,8 +177,68 @@ class EnhancedAIEngine:
     # ─────────────────────────────────────────
     def _engineer(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
-        close = df['close']
-        atr   = df['atr']
+        if 'close' not in df.columns:
+            raise KeyError("DataFrame must contain a 'close' column")
+
+        close = df['close'].astype(float)
+
+        # Ensure the minimum indicator columns exist so the engine can work with raw OHLC data.
+        if 'atr' not in df.columns:
+            high_low = df['high'] - df['low']
+            high_close = (df['high'] - close).abs()
+            low_close = (df['low'] - close).abs()
+            tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+            df['atr'] = tr.rolling(14).mean().fillna(tr)
+
+        if 'ema20' not in df.columns:
+            df['ema20'] = close.ewm(span=20, adjust=False).mean()
+        if 'ema50' not in df.columns:
+            df['ema50'] = close.ewm(span=50, adjust=False).mean()
+        if 'ema200' not in df.columns:
+            df['ema200'] = close.ewm(span=200, adjust=False).mean()
+
+        if 'rsi' not in df.columns:
+            delta = close.diff()
+            gain = delta.clip(lower=0)
+            loss = (-delta).clip(lower=0)
+            avg_gain = gain.rolling(14).mean()
+            avg_loss = loss.rolling(14).mean()
+            rs = avg_gain / (avg_loss + 1e-10)
+            df['rsi'] = 100 - (100 / (1 + rs))
+
+        if 'macd_line' not in df.columns or 'macd_signal' not in df.columns or 'macd_hist' not in df.columns:
+            ema12 = close.ewm(span=12, adjust=False).mean()
+            ema26 = close.ewm(span=26, adjust=False).mean()
+            df['macd_line'] = ema12 - ema26
+            df['macd_signal'] = df['macd_line'].ewm(span=9, adjust=False).mean()
+            df['macd_hist'] = df['macd_line'] - df['macd_signal']
+
+        if 'bb_width' not in df.columns:
+            rolling_mean = close.rolling(20).mean()
+            rolling_std = close.rolling(20).std()
+            upper = rolling_mean + 2 * rolling_std
+            lower = rolling_mean - 2 * rolling_std
+            df['bb_width'] = upper - lower
+
+        if 'plus_di' not in df.columns or 'minus_di' not in df.columns:
+            up_move = df['high'].diff()
+            down_move = -df['low'].diff()
+            plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0)
+            minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0)
+            atr = df['atr']
+            plus_di = 100 * pd.Series(plus_dm).rolling(14).mean() / (atr + 1e-10)
+            minus_di = 100 * pd.Series(minus_dm).rolling(14).mean() / (atr + 1e-10)
+            df['plus_di'] = plus_di.fillna(0)
+            df['minus_di'] = minus_di.fillna(0)
+
+        if 'stoch_k' not in df.columns or 'stoch_d' not in df.columns:
+            lowest_low = df['low'].rolling(14).min()
+            highest_high = df['high'].rolling(14).max()
+            k = 100 * ((close - lowest_low) / (highest_high - lowest_low + 1e-10))
+            df['stoch_k'] = k
+            df['stoch_d'] = df['stoch_k'].rolling(3).mean()
+
+        atr = df['atr']
 
         # ── TREND FEATURES ──────────────────────────────────────
         df['close_vs_ema20']  = (close - df['ema20'])  / (atr + 1e-10)
@@ -363,16 +441,35 @@ class EnhancedAIEngine:
     #  PREDICT WITH ALL FILTERS
     # ─────────────────────────────────────────
     def predict(self, df: pd.DataFrame, min_confidence: float = 0.55) -> dict:
-        if not self.is_trained:
-            return {"action": "WAIT", "confidence": 0, "reason": "Model not trained"}
+        if not self.is_trained or self.model is None:
+            return self._fallback_signal(df, "Model not trained")
 
         df   = self._engineer(df)
         last = df.iloc[-1]
         feats = [f for f in self.features if f in df.columns]
-        X     = last[feats].values.reshape(1, -1)
-        X_sc  = self.scaler.transform(X)
+        if not self.features:
+            return self._fallback_signal(df, "No compatible model features available")
 
-        probas   = self.model.predict_proba(X_sc)[0]
+        feature_values = []
+        for feature in self.features:
+            if feature in df.columns:
+                feature_values.append(float(last.get(feature, 0.0)))
+            else:
+                feature_values.append(0.0)
+
+        X = np.array([feature_values], dtype=float)
+        try:
+            X_sc = self.scaler.transform(X)
+        except Exception:
+            try:
+                X_sc = self.scaler.transform(np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0))
+            except Exception:
+                return self._fallback_signal(df, "Model feature alignment failed")
+
+        try:
+            probas = self.model.predict_proba(X_sc)[0]
+        except Exception:
+            return self._fallback_signal(df, "Model prediction failed")
         classes  = self.model.classes_
         prob_map = {c: p for c, p in zip(classes, probas)}
         p_sell   = prob_map.get(0, 0)
@@ -502,6 +599,44 @@ class EnhancedAIEngine:
             "timestamp":   datetime.now().isoformat(),
             "filter_rate": f"{self.performance['filtered']}/{self.performance['signals']} signals filtered"
         }
+
+    def _fallback_signal(self, df: pd.DataFrame, reason: str) -> dict:
+        """Return a structured WAIT signal when the model is unavailable or data is weak."""
+        try:
+            last = df.iloc[-1]
+            close = float(last.get('close', 0))
+            regime = self.detect_regime(df) if df is not None and not df.empty else "UNKNOWN"
+            return {
+                "action": "WAIT",
+                "confidence": 0.0,
+                "reason": reason,
+                "regime": regime,
+                "strategy": "FALLBACK",
+                "sl": round(close * 0.99, 5),
+                "tp": round(close * 1.01, 5),
+                "sl_pips": 0.0,
+                "tp_pips": 0.0,
+                "rr_ratio": 0.0,
+                "filters_passed": False,
+                "timestamp": datetime.now().isoformat(),
+                "filter_rate": "0/0 signals filtered"
+            }
+        except Exception:
+            return {
+                "action": "WAIT",
+                "confidence": 0.0,
+                "reason": reason,
+                "regime": "UNKNOWN",
+                "strategy": "FALLBACK",
+                "sl": 0.0,
+                "tp": 0.0,
+                "sl_pips": 0.0,
+                "tp_pips": 0.0,
+                "rr_ratio": 0.0,
+                "filters_passed": False,
+                "timestamp": datetime.now().isoformat(),
+                "filter_rate": "0/0 signals filtered"
+            }
 
     # ─────────────────────────────────────────
     #  REGIME DETECTION
