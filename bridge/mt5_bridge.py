@@ -148,20 +148,28 @@ class MT5Bridge:
         """
         logger.info("Connecting to Deriv MT5...")
 
-        DERIV_MT5_PATH = r"C:\Program Files\MetaTrader 5 Terminal\terminal64.exe"
-        path_arg = DERIV_MT5_PATH if os.path.exists(DERIV_MT5_PATH) else None
+        # Known MT5 install locations (checked in order)
+        KNOWN_PATHS = [
+            r"C:\Program Files\MetaTrader 5\terminal64.exe",
+            r"C:\Program Files\MetaTrader 5 Terminal\terminal64.exe",
+        ]
+        path_arg = next((p for p in KNOWN_PATHS if os.path.exists(p)), None)
 
-        # Try 1: connect to already-logged-in terminal (path only, no credentials)
-        initialized = mt5.initialize(path=path_arg) if path_arg else mt5.initialize()
+        # Try 1: auto-detect running terminal (no args — works if terminal is already open)
+        initialized = mt5.initialize()
 
-        # Try 2: if that failed, pass credentials explicitly
+        # Try 2: explicit path, no credentials (terminal already logged in)
+        if not initialized and path_arg:
+            mt5.shutdown()
+            initialized = mt5.initialize(path=path_arg)
+
+        # Try 3: explicit path + credentials
         if not initialized:
-            initialized = mt5.initialize(
-                path=path_arg,
-                login=MT5_LOGIN,
-                password=MT5_PASSWORD,
-                server=MT5_SERVER,
-            )
+            mt5.shutdown()
+            kwargs = dict(login=MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER)
+            if path_arg:
+                kwargs["path"] = path_arg
+            initialized = mt5.initialize(**kwargs)
 
         if not initialized:
             error = mt5.last_error()
