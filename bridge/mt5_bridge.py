@@ -363,6 +363,16 @@ class MT5Bridge:
         # Clamp between min and max allowed lots
         lot = max(info.volume_min, min(info.volume_max, lot))
 
+        # Safety cap: Deriv synthetic indices have tiny tick values so the
+        # formula can produce absurdly large lot numbers (e.g. 59 lots).
+        # Cap at 2 lots for synthetics and 5 lots for FX/metals to prevent
+        # margin blow-ups while the per-symbol contract specs are refined.
+        if "Index" in symbol:
+            lot = min(lot, 2.0)
+        else:
+            lot = min(lot, 5.0)
+        lot = max(info.volume_min, round(round(lot / info.volume_step) * info.volume_step, 2))
+
         logger.info(f"Calculated lot size for {symbol}: {lot} lots (Risk: ${risk_amount:.2f}, SL: {sl_pips} pips)")
         return lot
 
@@ -457,6 +467,12 @@ class MT5Bridge:
         if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
             error_code = result.retcode if result else "None"
             logger.error(f"Trade FAILED for {symbol} {direction}. Error code: {error_code}")
+            if error_code == 10027:
+                logger.error("  ► Fix: In MT5 toolbar click 'Algo Trading' button — it must be GREEN")
+            elif error_code == 10019:
+                logger.error("  ► Fix: Not enough free margin — reduce lot size or close open trades")
+            elif error_code in (10014, 10013):
+                logger.error("  ► Fix: Invalid lot size — broker rejected the volume")
             return None
 
         logger.info(f"✅ Trade PLACED: {direction} {lot} lots of {symbol} @ {price} | SL: {sl} | TP: {tp}")
