@@ -138,6 +138,7 @@ class EnhancedAIEngine:
             # Volatility
             'atr', 'atr_pct',       # ATR as % of price
             'bb_width', 'bb_pct', 'bb_squeeze',
+            'bb_upper_cross', 'bb_lower_cross', 'bb_mean_rev',
             'volatility_regime',    # 1=low, 2=normal, 3=high
 
             # Trend strength
@@ -213,12 +214,13 @@ class EnhancedAIEngine:
             df['macd_signal'] = df['macd_line'].ewm(span=9, adjust=False).mean()
             df['macd_hist'] = df['macd_line'] - df['macd_signal']
 
+        # Always compute BB components so pct/cross features are available
+        _bb_mean  = close.rolling(20).mean()
+        _bb_std   = close.rolling(20).std()
+        _bb_upper = _bb_mean + 2 * _bb_std
+        _bb_lower = _bb_mean - 2 * _bb_std
         if 'bb_width' not in df.columns:
-            rolling_mean = close.rolling(20).mean()
-            rolling_std = close.rolling(20).std()
-            upper = rolling_mean + 2 * rolling_std
-            lower = rolling_mean - 2 * rolling_std
-            df['bb_width'] = upper - lower
+            df['bb_width'] = _bb_upper - _bb_lower
 
         if 'plus_di' not in df.columns or 'minus_di' not in df.columns:
             up_move = df['high'].diff()
@@ -230,6 +232,9 @@ class EnhancedAIEngine:
             minus_di = 100 * pd.Series(minus_dm).rolling(14).mean() / (atr + 1e-10)
             df['plus_di'] = plus_di.fillna(0)
             df['minus_di'] = minus_di.fillna(0)
+        if 'adx' not in df.columns:
+            _dx = (abs(df['plus_di'] - df['minus_di']) / (df['plus_di'] + df['minus_di'] + 1e-10)) * 100
+            df['adx'] = _dx.rolling(14).mean().fillna(20)
 
         if 'stoch_k' not in df.columns or 'stoch_d' not in df.columns:
             lowest_low = df['low'].rolling(14).min()
@@ -262,8 +267,16 @@ class EnhancedAIEngine:
         df['macd_hist_slope'] = df['macd_hist'].diff(2)
 
         # ── VOLATILITY ──────────────────────────────────────────
-        df['atr_pct']   = atr / (close + 1e-10) * 100
-        df['bb_squeeze']= (df['bb_width'] < df['bb_width'].rolling(20).mean()).astype(int)
+        df['atr_pct']        = atr / (close + 1e-10) * 100
+        df['bb_pct']         = (close - _bb_lower) / (df['bb_width'] + 1e-10)
+        df['bb_squeeze']     = (df['bb_width'] < df['bb_width'].rolling(20).mean()).astype(int)
+        # Bollinger Band mean-reversion signals
+        _prev_close          = close.shift(1)
+        df['bb_upper_cross'] = np.where((close > _bb_upper) & (_prev_close <= _bb_upper.shift(1)), 1, 0)
+        df['bb_lower_cross'] = np.where((close < _bb_lower) & (_prev_close >= _bb_lower.shift(1)), 1, 0)
+        df['bb_mean_rev']    = np.where(close > _bb_upper, -1,   # overbought → expect down
+                               np.where(close < _bb_lower,  1,   # oversold   → expect up
+                               0))
         atr_20 = atr.rolling(20).mean()
         df['volatility_regime'] = np.where(atr < atr_20 * 0.7, 1,
                                   np.where(atr > atr_20 * 1.5, 3, 2))
@@ -372,6 +385,28 @@ class EnhancedAIEngine:
         y     = df['label'].astype(int).values
         X_sc  = self.scaler.fit_transform(X)
 
+        # ── HELD-OUT OOS EVALUATION (walk-forward, last 20%) ────
+        oos_accuracy  = None
+        oos_hit_ratio = None
+        split = int(len(X_sc) * 0.8)
+        if split >= 60 and (len(X_sc) - split) >= 20:
+            X_tr80, X_te20 = X_sc[:split], X_sc[split:]
+            y_tr80, y_te20 = y[:split],    y[split:]
+            if len(np.unique(y_tr80)) >= 2:
+                try:
+                    _eval = RandomForestClassifier(
+                        n_estimators=100, max_depth=6, random_state=42, n_jobs=-1
+                    )
+                    _eval.fit(X_tr80, y_tr80)
+                    y_pred = _eval.predict(X_te20)
+                    oos_accuracy = round(float(np.mean(y_pred == y_te20)), 4)
+                    # Directional hit ratio: BUY(2) vs SELL(0), ignoring WAIT(1)
+                    mask = (y_te20 != 1) & (y_pred != 1)
+                    if mask.sum() > 0:
+                        oos_hit_ratio = round(float(np.mean(y_pred[mask] == y_te20[mask])), 4)
+                except Exception as exc:
+                    logger.debug(f"OOS eval failed for {self.symbol}: {exc}")
+
         # ── BUILD ENSEMBLE ──────────────────────────────────────
         rf = RandomForestClassifier(
             n_estimators=300, max_depth=8,
@@ -428,18 +463,22 @@ class EnhancedAIEngine:
         self.features = feats
         self.is_trained = True
 
-        cv_acc = np.mean(scores)
-        logger.info(f"[OK] {self.symbol} ensemble trained | CV: {cv_acc:.1%} | "
+        cv_acc  = np.mean(scores)
+        oos_str = f" | OOS: {oos_accuracy:.1%}" if oos_accuracy is not None else ""
+        hit_str = f" | Hit: {oos_hit_ratio:.1%}" if oos_hit_ratio is not None else ""
+        logger.info(f"[OK] {self.symbol} ensemble trained | CV: {cv_acc:.1%}{oos_str}{hit_str} | "
                     f"Models: {len(estimators)} | Features: {len(feats)}")
         self._save_model()
 
         return {
-            "success":       True,
-            "cv_accuracy":   round(cv_acc, 4),
-            "cv_scores":     [round(s, 4) for s in scores],
-            "samples":       len(X),
-            "features_used": len(feats),
-            "models_in_ensemble": len(estimators)
+            "success":            True,
+            "cv_accuracy":        round(cv_acc, 4),
+            "oos_accuracy":       oos_accuracy,
+            "oos_hit_ratio":      oos_hit_ratio,
+            "cv_scores":          [round(s, 4) for s in scores],
+            "samples":            len(X),
+            "features_used":      len(feats),
+            "models_in_ensemble": len(estimators),
         }
 
     # ─────────────────────────────────────────
