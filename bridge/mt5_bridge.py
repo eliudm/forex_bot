@@ -414,6 +414,22 @@ class MT5Bridge:
         return sl, tp
 
     # ─────────────────────────────────────────
+    #  DETECT CORRECT FILLING TYPE
+    # ─────────────────────────────────────────
+    def _get_fill_type(self, symbol: str) -> int:
+        """Return the first fill type the broker supports for this symbol.
+        filling_mode bitmask: bit0=FOK(1), bit1=IOC(2), bit2=RETURN(4).
+        Deriv synthetics are FOK-only (mode=1); standard FX often has RETURN."""
+        info = mt5.symbol_info(symbol)
+        if info is None:
+            return mt5.ORDER_FILLING_FOK
+        mode = info.filling_mode
+        if mode & 1: return mt5.ORDER_FILLING_FOK
+        if mode & 4: return mt5.ORDER_FILLING_RETURN
+        if mode & 2: return mt5.ORDER_FILLING_IOC
+        return mt5.ORDER_FILLING_FOK
+
+    # ─────────────────────────────────────────
     #  PLACE A TRADE
     # ─────────────────────────────────────────
     def place_trade(self, symbol: str, direction: str, lot: float,
@@ -458,7 +474,7 @@ class MT5Bridge:
             "magic":       self.MAGIC,         # Unique ID to identify our bot's trades
             "comment":     comment,
             "type_time":   mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_RETURN,
+            "type_filling": self._get_fill_type(symbol),
         }
 
         # Send the order
@@ -553,7 +569,7 @@ class MT5Bridge:
             "magic":     self.MAGIC,
             "comment":   "AI_BOT_CLOSE",
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_RETURN,
+            "type_filling": self._get_fill_type(pos.symbol),
         }
 
         result = mt5.order_send(request)
