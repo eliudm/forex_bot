@@ -148,25 +148,29 @@ class MT5Bridge:
         """
         logger.info("Connecting to Deriv MT5...")
 
-        # The Python library must find the correct terminal64.exe. Deriv MT5
-        # installs to a non-default path that the library won't auto-detect,
-        # so we pass it explicitly. Fall back to letting the library auto-detect
-        # if the known path doesn't exist (portable/different install location).
         DERIV_MT5_PATH = r"C:\Program Files\MetaTrader 5 Terminal\terminal64.exe"
         path_arg = DERIV_MT5_PATH if os.path.exists(DERIV_MT5_PATH) else None
 
-        initialized = mt5.initialize(
-            path=path_arg,
-            login=MT5_LOGIN,
-            password=MT5_PASSWORD,
-            server=MT5_SERVER,
-        )
+        # Try 1: connect to already-logged-in terminal (path only, no credentials)
+        initialized = mt5.initialize(path=path_arg) if path_arg else mt5.initialize()
+
+        # Try 2: if that failed, pass credentials explicitly
+        if not initialized:
+            initialized = mt5.initialize(
+                path=path_arg,
+                login=MT5_LOGIN,
+                password=MT5_PASSWORD,
+                server=MT5_SERVER,
+            )
 
         if not initialized:
             error = mt5.last_error()
             logger.error(f"MT5 initialize() failed. Error: {error}")
-            logger.error("SOLUTION: Make sure MetaTrader 5 is open and logged in on your computer.")
-            logger.error(f"          Login={MT5_LOGIN}  Server={MT5_SERVER}  Path={path_arg}")
+            logger.error("SOLUTION:")
+            logger.error("  1. In MT5 toolbar — click 'Algo Trading' button (must be GREEN)")
+            logger.error("  2. Tools → Options → Expert Advisors → tick 'Allow automated trading'")
+            logger.error("  3. Restart MT5, then run the bot again")
+            logger.error(f"  Login={MT5_LOGIN}  Server={MT5_SERVER}  Path={path_arg}")
             return False
 
         # Step 3: Confirm connection and show account info
