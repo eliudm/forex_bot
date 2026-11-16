@@ -148,11 +148,15 @@ class MT5Bridge:
         """
         logger.info("Connecting to Deriv MT5...")
 
-        # Pass credentials directly to initialize() — required for Deriv MT5
-        # which may not have fully completed its own login handshake before
-        # initialize() is called. Without credentials here, initialize() fails
-        # with error -6 (Authorization failed) even when the terminal is open.
+        # The Python library must find the correct terminal64.exe. Deriv MT5
+        # installs to a non-default path that the library won't auto-detect,
+        # so we pass it explicitly. Fall back to letting the library auto-detect
+        # if the known path doesn't exist (portable/different install location).
+        DERIV_MT5_PATH = r"C:\Program Files\MetaTrader 5 Terminal\terminal64.exe"
+        path_arg = DERIV_MT5_PATH if os.path.exists(DERIV_MT5_PATH) else None
+
         initialized = mt5.initialize(
+            path=path_arg,
             login=MT5_LOGIN,
             password=MT5_PASSWORD,
             server=MT5_SERVER,
@@ -162,7 +166,7 @@ class MT5Bridge:
             error = mt5.last_error()
             logger.error(f"MT5 initialize() failed. Error: {error}")
             logger.error("SOLUTION: Make sure MetaTrader 5 is open and logged in on your computer.")
-            logger.error(f"          Login={MT5_LOGIN}  Server={MT5_SERVER}")
+            logger.error(f"          Login={MT5_LOGIN}  Server={MT5_SERVER}  Path={path_arg}")
             return False
 
         # Step 3: Confirm connection and show account info
