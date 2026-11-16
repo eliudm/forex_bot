@@ -148,22 +148,21 @@ class MT5Bridge:
         """
         logger.info("Connecting to Deriv MT5...")
 
-        # Step 1: Initialize the MT5 application
-        if not mt5.initialize():
-            logger.error(f"MT5 initialize() failed. Error: {mt5.last_error()}")
-            logger.error("SOLUTION: Make sure MetaTrader 5 is installed and running on your computer.")
-            return False
-
-        # Step 2: Log in with your credentials from settings.py
-        login_result = mt5.login(
+        # Pass credentials directly to initialize() — required for Deriv MT5
+        # which may not have fully completed its own login handshake before
+        # initialize() is called. Without credentials here, initialize() fails
+        # with error -6 (Authorization failed) even when the terminal is open.
+        initialized = mt5.initialize(
             login=MT5_LOGIN,
             password=MT5_PASSWORD,
-            server=MT5_SERVER
+            server=MT5_SERVER,
         )
 
-        if not login_result:
-            logger.error(f"MT5 login failed. Error: {mt5.last_error()}")
-            logger.error("SOLUTION: Check MT5_LOGIN, MT5_PASSWORD, and MT5_SERVER in config/settings.py")
+        if not initialized:
+            error = mt5.last_error()
+            logger.error(f"MT5 initialize() failed. Error: {error}")
+            logger.error("SOLUTION: Make sure MetaTrader 5 is open and logged in on your computer.")
+            logger.error(f"          Login={MT5_LOGIN}  Server={MT5_SERVER}")
             return False
 
         # Step 3: Confirm connection and show account info
