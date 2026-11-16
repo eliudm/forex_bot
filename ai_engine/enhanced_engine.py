@@ -385,13 +385,18 @@ class EnhancedAIEngine:
         )
 
         if XGBOOST_AVAILABLE:
-            xgb = XGBClassifier(
-                n_estimators=200, max_depth=5,
-                learning_rate=0.05, subsample=0.8,
-                use_label_encoder=False, eval_metric='mlogloss',
-                random_state=42, verbosity=0
-            )
-            estimators = [('rf', rf), ('gb', gb), ('xgb', xgb)]
+            try:
+                xgb = XGBClassifier(
+                    n_estimators=200, max_depth=5,
+                    learning_rate=0.05, subsample=0.8,
+                    eval_metric='mlogloss',
+                    random_state=42, verbosity=0
+                )
+                estimators = [('rf', rf), ('gb', gb), ('xgb', xgb)]
+            except TypeError:
+                # XGBoost API changed — fall back to RF + GB only
+                logger.warning("XGBoost constructor failed (API change?); using RF + GB only.")
+                estimators = [('rf', rf), ('gb', gb)]
         else:
             estimators = [('rf', rf), ('gb', gb)]
 
