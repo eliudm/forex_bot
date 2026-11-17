@@ -109,9 +109,12 @@ canvas{display:block;width:100%}
         <div class="mode on" id="bSemi" onclick="setMode('SEMI_AUTO')"><div class="mt">Semi-Auto</div><div class="ms">You approve</div></div>
         <div class="mode" id="bFull" onclick="setMode('FULL_AUTO')"><div class="mt">Full Auto</div><div class="ms">Bot trades</div></div>
       </div>
-      <button class="btn bs" onclick="doStart()">START BOT</button>
-      <button class="btn bx" onclick="doStop()">STOP BOT</button>
+      <button class="btn bs" id="btnStart" onclick="doStart()">START BOT</button>
+      <button class="btn bx" id="btnStop"  onclick="doStop()">STOP BOT</button>
       <button class="btn br" onclick="location='/report'">VIEW REPORT</button>
+      <div id="botRunningBadge" style="display:none;margin-top:8px;background:#0d2b1e;border:1px solid #00e5a0;border-radius:8px;padding:6px 10px;font-size:.72rem;color:#00e5a0;text-align:center">
+        ● Bot is running — scan every 5 min
+      </div>
       <div class="cm" id="cm"></div>
 
       <div style="margin-top:16px;border-top:1px solid #1e2435;padding-top:14px">
@@ -206,6 +209,7 @@ function refresh() {
       return;
     }
     var alive = d.status && d.status !== 'OFFLINE';
+    setBotState(alive);
     document.getElementById('dot').className = 'dot' + (alive ? ' dotl' : '');
     document.getElementById('plbl').textContent = alive ? 'LIVE' : 'OFFLINE';
     document.getElementById('upd').textContent = 'Updated: ' + ts();
@@ -338,7 +342,31 @@ function drawChart() {
   ctx.fillText('$'+Math.round(mn), 4, H-4);
 }
 
+var _botAlive = false;
+function setBotState(alive) {
+  _botAlive = alive;
+  var bs = document.getElementById('btnStart');
+  var bx = document.getElementById('btnStop');
+  var badge = document.getElementById('botRunningBadge');
+  if (alive) {
+    bs.disabled = true;
+    bs.style.opacity = '0.4';
+    bs.style.cursor  = 'not-allowed';
+    bs.title = 'Bot is already running';
+    bx.disabled = false;
+    bx.style.opacity = '1';
+    bx.style.cursor  = 'pointer';
+    badge.style.display = 'block';
+  } else {
+    bs.disabled = false;
+    bs.style.opacity = '1';
+    bs.style.cursor  = 'pointer';
+    bs.title = '';
+    badge.style.display = 'none';
+  }
+}
 function doStart() {
+  if (_botAlive) { msg('Bot is already running!', '#fbbf24'); return; }
   post('/api/control/start');
   msg('Start signal sent', '#00e5a0');
   log('Start signal sent to bot', 'ok');
@@ -347,6 +375,7 @@ function doStop() {
   post('/api/control/stop');
   msg('Stop signal sent', '#fbbf24');
   log('Stop signal sent to bot', 'wn');
+  setBotState(false);
 }
 function setMode(m) {
   document.getElementById('bSemi').className = 'mode'+(m==='SEMI_AUTO'?' on':'');
