@@ -232,6 +232,83 @@ def ctrl_mode():
     return jsonify({"ok": True, "mode": mode})
 
 
+@app.route("/api/positions")
+def api_positions():
+    """Live open positions with floating P&L from MT5."""
+    try:
+        import MetaTrader5 as mt5
+        if not mt5.initialize():
+            return jsonify([])
+        positions = mt5.positions_get()
+        result = []
+        if positions:
+            for p in positions:
+                tick = mt5.symbol_info_tick(p.symbol)
+                current = tick.bid if p.type == 1 else tick.ask if tick else p.price_open
+                result.append({
+                    "ticket":     p.ticket,
+                    "symbol":     p.symbol,
+                    "direction":  "BUY" if p.type == 0 else "SELL",
+                    "lot":        p.volume,
+                    "open_price": p.price_open,
+                    "current":    round(current, 5) if current else 0,
+                    "sl":         p.sl,
+                    "tp":         p.tp,
+                    "profit":     round(p.profit, 2),
+                    "swap":       round(p.swap, 2),
+                    "open_time":  datetime.fromtimestamp(p.time).strftime("%H:%M %d/%m"),
+                    "magic":      p.magic,
+                })
+        mt5.shutdown()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/positions/close", methods=["POST"])
+def api_close_position():
+    """Close a specific position by ticket."""
+    try:
+        import MetaTrader5 as mt5
+        data   = request.get_json() or {}
+        ticket = int(data.get("ticket", 0))
+        if not ticket:
+            return jsonify({"ok": False, "error": "No ticket"}), 400
+        if not mt5.initialize():
+            return jsonify({"ok": False, "error": "MT5 not connected"}), 500
+        positions = mt5.positions_get(ticket=ticket)
+        if not positions:
+            mt5.shutdown()
+            return jsonify({"ok": False, "error": "Position not found"}), 404
+        pos  = positions[0]
+        tick = mt5.symbol_info_tick(pos.symbol)
+        info = mt5.symbol_info(pos.symbol)
+        fill = mt5.ORDER_FILLING_FOK
+        if info and (info.filling_mode & 4):
+            fill = mt5.ORDER_FILLING_RETURN
+        req = {
+            "action":       mt5.TRADE_ACTION_DEAL,
+            "symbol":       pos.symbol,
+            "volume":       pos.volume,
+            "type":         mt5.ORDER_TYPE_SELL if pos.type == 0 else mt5.ORDER_TYPE_BUY,
+            "position":     ticket,
+            "price":        tick.bid if pos.type == 0 else tick.ask,
+            "deviation":    20,
+            "magic":        pos.magic,
+            "comment":      "DASHBOARD_CLOSE",
+            "type_time":    mt5.ORDER_TIME_GTC,
+            "type_filling": fill,
+        }
+        result = mt5.order_send(req)
+        mt5.shutdown()
+        if result and result.retcode == 10009:
+            return jsonify({"ok": True, "profit": round(pos.profit, 2)})
+        code = result.retcode if result else "None"
+        return jsonify({"ok": False, "error": f"retcode={code}"}), 500
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/api/control/settings", methods=["GET", "POST"])
 def ctrl_settings():
     settings_file = os.path.join(_ROOT, "config", "settings.py")

@@ -68,10 +68,10 @@ canvas{display:block;width:100%}
 </div>
 
 <div class="cards">
-  <div class="card"><div class="l">Balance</div><div class="v g" id="cBal">—</div><div class="s">Account balance</div></div>
+  <div class="card"><div class="l">Equity</div><div class="v g" id="cBal">—</div><div class="s">Balance: <span id="cBalSub">—</span></div></div>
   <div class="card"><div class="l">Today P&L</div><div class="v" id="cPnl">—</div><div class="s" id="cRet">0.00%</div></div>
   <div class="card"><div class="l">Win Rate</div><div class="v" id="cWr">—</div><div class="s" id="cTrd">0 trades</div></div>
-  <div class="card"><div class="l">Open Trades</div><div class="v b" id="cOp">—</div><div class="s">Max: 5</div></div>
+  <div class="card"><div class="l">Open Trades</div><div class="v b" id="cOp">—</div><div class="s">Max: <span id="cMaxTrades">10</span></div></div>
 </div>
 
 <div class="grid">
@@ -142,6 +142,13 @@ canvas{display:block;width:100%}
         <div id="settingsMsg" style="font-size:.7rem;color:#22c55e;margin-top:8px;min-height:16px"></div>
       </div>
     </div>
+  </div>
+</div>
+
+<div class="box" id="posBox">
+  <div class="bh">Open Positions <span id="posPnl" style="font-size:.75rem;font-weight:400"></span></div>
+  <div id="posTable" style="font-size:.78rem">
+    <div style="color:#4b5675;padding:10px 0;text-align:center">Loading positions...</div>
   </div>
 </div>
 
@@ -220,10 +227,13 @@ function refresh() {
 
   api('/api/stats', function(err, d) {
     if (err || !d) return;
-    var bal = parseFloat(d.balance || 10000);
-    var pnl = parseFloat(d.total_pnl || 0);
-    document.getElementById('cBal').textContent = '$'+bal.toFixed(2);
-    document.getElementById('cBal').className = 'v '+(bal>=10000?'g':'r');
+    var bal    = parseFloat(d.balance || 10000);
+    var equity = parseFloat(d.equity  || d.balance || 10000);
+    var pnl    = parseFloat(d.total_pnl || 0);
+    document.getElementById('cBal').textContent = '$'+equity.toFixed(2);
+    document.getElementById('cBal').className = 'v '+(equity>=10000?'g':'r');
+    var balSub = document.getElementById('cBalSub');
+    if (balSub) balSub.textContent = '$'+bal.toFixed(2);
     document.getElementById('cPnl').textContent = (pnl>=0?'+':'')+'$'+pnl.toFixed(2);
     document.getElementById('cPnl').className = 'v '+(pnl>=0?'g':'r');
     document.getElementById('cRet').textContent = parseFloat(d.return_pct||0).toFixed(2)+'% return';
@@ -353,7 +363,10 @@ function msg(t, c) {
 
 function loadSettings() {
   fetch('/api/control/settings').then(r=>r.json()).then(d=>{
-    if (d.max_open_trades)      document.getElementById('sMaxTrades').value = d.max_open_trades;
+    if (d.max_open_trades) {
+      document.getElementById('sMaxTrades').value  = d.max_open_trades;
+      document.getElementById('cMaxTrades').textContent = d.max_open_trades;
+    }
     if (d.risk_per_trade_pct)   document.getElementById('sRiskPct').value   = (d.risk_per_trade_pct*100).toFixed(1);
     if (d.daily_loss_limit_pct) document.getElementById('sDailyLoss').value = (d.daily_loss_limit_pct*100).toFixed(1);
   }).catch(()=>{});
@@ -365,14 +378,76 @@ function saveSetting(key, val) {
       var el = document.getElementById('settingsMsg');
       el.textContent = d.ok ? 'Saved! Restart bot to apply.' : ('Error: '+d.error);
       el.style.color = d.ok ? '#22c55e' : '#ef4444';
+      if (d.ok && key === 'max_open_trades')
+        document.getElementById('cMaxTrades').textContent = parseInt(val);
       setTimeout(()=>{ el.textContent=''; }, 4000);
     });
+}
+
+function refreshPositions() {
+  fetch('/api/positions').then(r=>r.json()).then(positions=>{
+    if (!Array.isArray(positions)) return;
+    var el    = document.getElementById('posTable');
+    var hdr   = document.getElementById('posPnl');
+    var total = positions.reduce(function(s,p){ return s + (p.profit||0); }, 0);
+    hdr.textContent = positions.length
+      ? '(' + positions.length + ' trades) Floating: '
+        + (total>=0?'+':'') + '$' + total.toFixed(2)
+      : '(no open trades)';
+    hdr.style.color = total >= 0 ? '#00e5a0' : '#ef4444';
+    if (!positions.length) {
+      el.innerHTML = '<div style="color:#4b5675;padding:10px 0;text-align:center">No open positions</div>';
+      return;
+    }
+    var rows = positions.map(function(p) {
+      var pnlCol = p.profit >= 0 ? '#00e5a0' : '#ef4444';
+      var dir    = p.direction === 'BUY'
+        ? '<span style="color:#00e5a0;font-weight:600">BUY</span>'
+        : '<span style="color:#ef4444;font-weight:600">SELL</span>';
+      return '<tr style="border-bottom:1px solid #1e2435">'
+        + '<td style="padding:8px 4px;font-weight:600">' + p.symbol + '</td>'
+        + '<td style="padding:8px 4px">' + dir + '</td>'
+        + '<td style="padding:8px 4px;font-family:monospace">' + p.lot + ' lot</td>'
+        + '<td style="padding:8px 4px;font-family:monospace">' + p.open_price + '</td>'
+        + '<td style="padding:8px 4px;font-family:monospace;color:' + pnlCol + ';font-weight:600">'
+          + (p.profit >= 0 ? '+' : '') + '$' + p.profit.toFixed(2) + '</td>'
+        + '<td style="padding:8px 4px;color:#4b5675;font-size:.7rem">' + p.open_time + '</td>'
+        + '<td style="padding:8px 4px"><button onclick="closePosition(' + p.ticket + ',\'' + p.symbol + '\')" '
+          + 'style="background:#1e2435;border:1px solid #ef4444;color:#ef4444;padding:3px 8px;border-radius:5px;cursor:pointer;font-size:.7rem">Close</button></td>'
+        + '</tr>';
+    }).join('');
+    el.innerHTML = '<table style="width:100%;border-collapse:collapse">'
+      + '<tr style="color:#4b5675;font-size:.65rem;letter-spacing:1px"><th style="text-align:left;padding:4px">SYMBOL</th>'
+      + '<th style="text-align:left">DIR</th><th style="text-align:left">SIZE</th>'
+      + '<th style="text-align:left">ENTRY</th><th style="text-align:left">P&L</th>'
+      + '<th style="text-align:left">OPENED</th><th></th></tr>'
+      + rows + '</table>';
+  }).catch(function(){ });
+}
+
+function closePosition(ticket, symbol) {
+  if (!confirm('Close ' + symbol + ' #' + ticket + '?')) return;
+  fetch('/api/positions/close', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ticket: ticket})
+  }).then(r=>r.json()).then(function(d) {
+    if (d.ok) {
+      log('Closed ' + symbol + ' #' + ticket + ' — P&L: ' + (d.profit>=0?'+':'') + '$' + parseFloat(d.profit).toFixed(2), d.profit>=0?'ok':'wn');
+      refreshPositions();
+      refresh();
+    } else {
+      log('Failed to close #' + ticket + ': ' + d.error, 'wn');
+    }
+  });
 }
 
 log('Dashboard loaded. Connecting to bot...', 'in');
 refresh();
 loadSettings();
+refreshPositions();
 setInterval(refresh, 10000);
+setInterval(refreshPositions, 5000);
 window.addEventListener('resize', drawChart);
 </script>
 </body>
