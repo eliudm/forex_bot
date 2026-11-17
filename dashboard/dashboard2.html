@@ -113,6 +113,34 @@ canvas{display:block;width:100%}
       <button class="btn bx" onclick="doStop()">STOP BOT</button>
       <button class="btn br" onclick="location='/report'">VIEW REPORT</button>
       <div class="cm" id="cm"></div>
+
+      <div style="margin-top:16px;border-top:1px solid #1e2435;padding-top:14px">
+        <div style="font-size:.62rem;color:#4b5675;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px">Risk Settings</div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <label style="font-size:.75rem;color:#8891aa">
+            Max Open Trades
+            <div style="display:flex;align-items:center;gap:8px;margin-top:4px">
+              <input id="sMaxTrades" type="number" min="1" max="50" style="width:60px;background:#1a1f2e;border:1px solid #2a3045;color:#e0e6f0;padding:4px 8px;border-radius:6px;font-size:.85rem" />
+              <button onclick="saveSetting('max_open_trades', document.getElementById('sMaxTrades').value)" style="background:#3b82f6;border:none;color:#fff;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:.75rem">Save</button>
+            </div>
+          </label>
+          <label style="font-size:.75rem;color:#8891aa">
+            Risk Per Trade (%)
+            <div style="display:flex;align-items:center;gap:8px;margin-top:4px">
+              <input id="sRiskPct" type="number" min="0.1" max="5" step="0.1" style="width:60px;background:#1a1f2e;border:1px solid #2a3045;color:#e0e6f0;padding:4px 8px;border-radius:6px;font-size:.85rem" />
+              <button onclick="saveSetting('risk_per_trade_pct', document.getElementById('sRiskPct').value/100)" style="background:#3b82f6;border:none;color:#fff;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:.75rem">Save</button>
+            </div>
+          </label>
+          <label style="font-size:.75rem;color:#8891aa">
+            Daily Loss Limit (%)
+            <div style="display:flex;align-items:center;gap:8px;margin-top:4px">
+              <input id="sDailyLoss" type="number" min="1" max="20" step="0.5" style="width:60px;background:#1a1f2e;border:1px solid #2a3045;color:#e0e6f0;padding:4px 8px;border-radius:6px;font-size:.85rem" />
+              <button onclick="saveSetting('daily_loss_limit_pct', document.getElementById('sDailyLoss').value/100)" style="background:#3b82f6;border:none;color:#fff;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:.75rem">Save</button>
+            </div>
+          </label>
+        </div>
+        <div id="settingsMsg" style="font-size:.7rem;color:#22c55e;margin-top:8px;min-height:16px"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -323,8 +351,27 @@ function msg(t, c) {
   setTimeout(function(){ e.textContent=''; }, 3000);
 }
 
+function loadSettings() {
+  fetch('/api/control/settings').then(r=>r.json()).then(d=>{
+    if (d.max_open_trades)      document.getElementById('sMaxTrades').value = d.max_open_trades;
+    if (d.risk_per_trade_pct)   document.getElementById('sRiskPct').value   = (d.risk_per_trade_pct*100).toFixed(1);
+    if (d.daily_loss_limit_pct) document.getElementById('sDailyLoss').value = (d.daily_loss_limit_pct*100).toFixed(1);
+  }).catch(()=>{});
+}
+function saveSetting(key, val) {
+  var body = {}; body[key] = parseFloat(val);
+  fetch('/api/control/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
+    .then(r=>r.json()).then(d=>{
+      var el = document.getElementById('settingsMsg');
+      el.textContent = d.ok ? 'Saved! Restart bot to apply.' : ('Error: '+d.error);
+      el.style.color = d.ok ? '#22c55e' : '#ef4444';
+      setTimeout(()=>{ el.textContent=''; }, 4000);
+    });
+}
+
 log('Dashboard loaded. Connecting to bot...', 'in');
 refresh();
+loadSettings();
 setInterval(refresh, 10000);
 window.addEventListener('resize', drawChart);
 </script>

@@ -24,7 +24,7 @@ except ImportError:
 #  PAPER = simulated broker, no account needed (default — just works)
 #  MT5   = real Deriv MT5 account via the MetaTrader5 terminal
 # ─────────────────────────────────────────────
-BROKER_MODE = os.environ.get("BROKER_MODE", "PAPER").upper()
+BROKER_MODE = os.environ.get("BROKER_MODE", "MT5").upper()
 
 # ─────────────────────────────────────────────
 #  DERIV MT5 LOGIN CREDENTIALS (only used when BROKER_MODE = "MT5")
@@ -94,7 +94,7 @@ MARKETS = {
 # ─────────────────────────────────────────────
 ACCOUNT_BALANCE       = 10000   # Your balance in USD
 RISK_PER_TRADE_PCT    = 0.01    # 1% risk per trade
-MAX_OPEN_TRADES       = 5       # Max simultaneous trades
+MAX_OPEN_TRADES       = 10      # Max simultaneous trades
 DAILY_LOSS_LIMIT_PCT  = 0.03    # Stop if -3% in one day
 MIN_REWARD_RISK_RATIO = 2.0     # Minimum 2:1 reward/risk
 
@@ -125,12 +125,12 @@ TELEGRAM_ENABLED = bool(TELEGRAM_TOKEN and TELEGRAM_CHAT_ID)
 #              deliberately, once you trust it, not by inheriting a
 #              risky default
 #  FULL_AUTO = bot trades automatically with no human in the loop
-#  Override with BOT_EXECUTION_MODE=FULL_AUTO for non-interactive runs —
+#  Override with BOT_EXECUTION_MODE = "FULL_AUTO"
 #  SEMI_AUTO's approval prompt calls input(), which hangs in CI/automation.
 # ─────────────────────────────────────────────
-EXECUTION_MODE = os.environ.get("BOT_EXECUTION_MODE", "SEMI_AUTO")
+EXECUTION_MODE = "FULL_AUTO"
 if EXECUTION_MODE not in ("SEMI_AUTO", "FULL_AUTO"):
-    EXECUTION_MODE = "SEMI_AUTO"
+    EXECUTION_MODE = "FULL_AUTO"
 
 # ─────────────────────────────────────────────
 #  LOGGING

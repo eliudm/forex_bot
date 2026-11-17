@@ -152,7 +152,7 @@ class PerformanceTracker:
         avg_win       = sum(t['profit'] for t in wins)   / len(wins)   if wins   else 0
         avg_loss      = sum(t['profit'] for t in losses) / len(losses) if losses else 0
         profit_factor = abs(sum(t['profit'] for t in wins)) / abs(sum(t['profit'] for t in losses)) \
-                        if losses and sum(t['profit'] for t in losses) != 0 else float('inf')
+                        if losses and sum(t['profit'] for t in losses) != 0 else 999.0
 
         # ── DRAWDOWN ────────────────────────────────────────────
         peak, trough, max_dd = 0, 0, 0

@@ -4,10 +4,12 @@ from datetime import datetime, date
 
 app = Flask(__name__, static_folder='.')
 
-LOG_DIR      = "logs"
-STATE_FILE   = "logs/loss_detector_state.json"
-SIGNAL_FILE  = "logs/latest_signals.json"
-CONTROL_FILE = "logs/bot_control.json"
+# Always resolve paths relative to the repo root, regardless of cwd
+_ROOT        = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LOG_DIR      = os.path.join(_ROOT, "logs")
+STATE_FILE   = os.path.join(_ROOT, "logs", "loss_detector_state.json")
+SIGNAL_FILE  = os.path.join(_ROOT, "logs", "latest_signals.json")
+CONTROL_FILE = os.path.join(_ROOT, "logs", "bot_control.json")
 
 
 def read_state():
@@ -71,6 +73,36 @@ def api_status():
     })
 
 
+def _count_open_trades():
+    """Read open trade count from performance tracker."""
+    tracker_file = os.path.join(_ROOT, "logs", "performance_tracker.json")
+    try:
+        if os.path.exists(tracker_file):
+            with open(tracker_file, encoding="utf-8") as f:
+                data = json.load(f)
+            return len(data.get("open_trades", {}))
+    except Exception:
+        pass
+    return 0
+
+
+def _read_mt5_balance():
+    """Try to get live balance from MT5; fall back to state file."""
+    try:
+        import MetaTrader5 as mt5
+        if mt5.initialize():
+            acct = mt5.account_info()
+            if acct:
+                balance = acct.balance
+                equity  = acct.equity
+                mt5.shutdown()
+                return balance, equity
+            mt5.shutdown()
+    except Exception:
+        pass
+    return None, None
+
+
 @app.route("/api/stats")
 def api_stats():
     state  = read_state()
@@ -80,18 +112,23 @@ def api_stats():
     wins      = [t for t in today_trades if t.get("profit", 0) > 0]
     losses    = [t for t in today_trades if t.get("profit", 0) <= 0]
     total_pnl = sum(t.get("profit", 0) for t in today_trades)
-    balance   = state.get("current_balance", 10000)
-    initial   = 10000
-    ret_pct   = ((balance - initial) / initial * 100) if initial else 0
+
+    # Try live MT5 balance first, fall back to state file
+    live_balance, live_equity = _read_mt5_balance()
+    balance  = live_balance  if live_balance  is not None else state.get("current_balance", 10000)
+    initial  = 10000
+    ret_pct  = ((balance - initial) / initial * 100) if initial else 0
+
     return jsonify({
         "balance":      round(balance, 2),
+        "equity":       round(live_equity, 2) if live_equity is not None else round(balance, 2),
         "total_pnl":    round(total_pnl, 2),
         "return_pct":   round(ret_pct, 2),
         "total_trades": len(today_trades),
         "wins":         len(wins),
         "losses":       len(losses),
         "win_rate":     round(len(wins) / len(today_trades) * 100, 1) if today_trades else 0,
-        "open_trades":  0,
+        "open_trades":  _count_open_trades(),
     })
 
 
@@ -193,6 +230,45 @@ def ctrl_mode():
         s = re.sub(r'EXECUTION_MODE\s*=\s*[^\n]+', f'EXECUTION_MODE = "{mode}"', s)
         open(settings, "w", encoding="utf-8").write(s)
     return jsonify({"ok": True, "mode": mode})
+
+
+@app.route("/api/control/settings", methods=["GET", "POST"])
+def ctrl_settings():
+    settings_file = os.path.join(_ROOT, "config", "settings.py")
+    if request.method == "POST":
+        data = request.get_json() or {}
+        if "max_open_trades" in data:
+            val = int(data["max_open_trades"])
+            val = max(1, min(50, val))  # clamp 1-50
+            s = open(settings_file, encoding="utf-8").read()
+            s = re.sub(r'MAX_OPEN_TRADES\s*=\s*\d+', f'MAX_OPEN_TRADES       = {val}', s)
+            open(settings_file, "w", encoding="utf-8").write(s)
+        if "risk_per_trade_pct" in data:
+            val = float(data["risk_per_trade_pct"])
+            val = max(0.001, min(0.05, val))  # clamp 0.1%-5%
+            s = open(settings_file, encoding="utf-8").read()
+            s = re.sub(r'RISK_PER_TRADE_PCT\s*=\s*[\d.]+', f'RISK_PER_TRADE_PCT    = {val:.3f}', s)
+            open(settings_file, "w", encoding="utf-8").write(s)
+        if "daily_loss_limit_pct" in data:
+            val = float(data["daily_loss_limit_pct"])
+            val = max(0.01, min(0.20, val))  # clamp 1%-20%
+            s = open(settings_file, encoding="utf-8").read()
+            s = re.sub(r'DAILY_LOSS_LIMIT_PCT\s*=\s*[\d.]+', f'DAILY_LOSS_LIMIT_PCT  = {val:.2f}', s)
+            open(settings_file, "w", encoding="utf-8").write(s)
+        return jsonify({"ok": True})
+    # GET — read current values
+    try:
+        s = open(settings_file, encoding="utf-8").read()
+        m_max  = re.search(r'MAX_OPEN_TRADES\s*=\s*(\d+)', s)
+        m_risk = re.search(r'RISK_PER_TRADE_PCT\s*=\s*([\d.]+)', s)
+        m_loss = re.search(r'DAILY_LOSS_LIMIT_PCT\s*=\s*([\d.]+)', s)
+        return jsonify({
+            "max_open_trades":      int(m_max.group(1))   if m_max  else 10,
+            "risk_per_trade_pct":   float(m_risk.group(1)) if m_risk else 0.01,
+            "daily_loss_limit_pct": float(m_loss.group(1)) if m_loss else 0.03,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/control/status")
