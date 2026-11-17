@@ -28,7 +28,7 @@ from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
-TRACKER_FILE = "logs/performance_tracker.json"
+TRACKER_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "performance_tracker.json")
 
 
 class PerformanceTracker:
@@ -333,7 +333,7 @@ class PerformanceTracker:
         print("="*60 + "\n")
 
     def _save(self):
-        os.makedirs("logs", exist_ok=True)
+        os.makedirs(os.path.dirname(TRACKER_FILE), exist_ok=True)
         data = {"open_trades": self.trades, "history": self.history[-500:]}
         with open(TRACKER_FILE, "w") as f:
             json.dump(data, f, indent=2)

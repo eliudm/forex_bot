@@ -291,6 +291,10 @@ class ForexAIBot:
             logger.error("   2. Your credentials in .env are correct")
             sys.exit(1)
 
+        # Step 2b: Reconcile tracker with actual MT5 open positions
+        if RUNTIME_CONFIG['broker_mode'] == "MT5":
+            self._reconcile_tracker()
+
         # Step 3: Initialize AI engines and train models
         # model_dir is namespaced by broker mode (models/paper/, models/mt5/)
         # so a model trained on PAPER mode's synthetic data is never silently
@@ -517,6 +521,51 @@ class ForexAIBot:
                 logger.info(f"Mode changed to: {new_mode}")
         except Exception as e:
             logger.debug(f"Control file read error: {e}")
+
+    def _reconcile_tracker(self):
+        """Sync tracker's open_trades with actual MT5 positions on startup.
+        Removes ghost paper-broker entries and adds any real MT5 positions
+        that were placed but never recorded (e.g. due to crash between
+        order_send and record_open)."""
+        import MetaTrader5 as mt5
+        positions = mt5.positions_get()
+        if positions is None:
+            return
+        bot_magic = self.bridge.MAGIC
+        real_tickets = {str(p.ticket) for p in positions if p.magic == bot_magic}
+        tracked     = set(self.tracker.trades.keys())
+
+        # Remove tracked trades that no longer exist in MT5
+        stale = tracked - real_tickets
+        for t in stale:
+            sym = self.tracker.trades[t].get("symbol", "?")
+            logger.warning(f"[RECONCILE] Removing stale tracked trade {t} ({sym}) — not in MT5")
+            del self.tracker.trades[t]
+
+        # Add real MT5 positions that aren't tracked yet
+        for p in positions:
+            if p.magic != bot_magic:
+                continue
+            key = str(p.ticket)
+            if key not in self.tracker.trades:
+                logger.warning(f"[RECONCILE] Adding untracked MT5 position {p.ticket} ({p.symbol})")
+                self.tracker.trades[key] = {
+                    "ticket":    p.ticket,
+                    "symbol":    p.symbol,
+                    "direction": "BUY" if p.type == 0 else "SELL",
+                    "entry":     p.price_open,
+                    "sl":        p.sl,
+                    "tp":        p.tp,
+                    "lot":       p.volume,
+                    "confidence": 0.0,
+                    "strategy":  "RECOVERED",
+                    "regime":    "UNKNOWN",
+                    "session":   "UNKNOWN",
+                    "open_time": str(p.time),
+                    "status":    "OPEN",
+                }
+        self.tracker._save()
+        logger.info(f"[RECONCILE] Tracker synced: {len(self.tracker.trades)} open positions")
 
     def on_trade_closed(self, symbol: str, profit: float,
                         confidence: float = 0.0, strategy: str = "N/A"):
