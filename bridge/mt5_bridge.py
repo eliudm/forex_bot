@@ -393,10 +393,18 @@ class MT5Bridge:
         placing a trade with no real stop at all.
         """
         info = mt5.symbol_info(symbol)
-        if info is None or not getattr(info, "trade_stops_level", 0):
+        if info is None:
             return sl, tp
 
-        min_distance = info.trade_stops_level * info.point
+        stops_level = getattr(info, "trade_stops_level", 0) or 0
+        freeze_level = getattr(info, "trade_freeze_level", 0) or 0
+        # Use whichever is larger, plus a 20% safety buffer
+        raw_distance = max(stops_level, freeze_level) * info.point
+        if raw_distance <= 0:
+            return sl, tp
+
+        min_distance = raw_distance * 1.2   # 20% buffer so we're safely clear
+        digits       = info.digits
         sl_dist = abs(price - sl)
         tp_dist = abs(price - tp)
 
@@ -404,13 +412,17 @@ class MT5Bridge:
             return sl, tp
 
         logger.warning(f"{symbol}: SL/TP closer than broker's minimum stop "
-                        f"distance ({min_distance:.5f}) — widening to comply.")
+                        f"distance ({raw_distance:.5f}) — widening to comply.")
         if direction == "BUY":
-            sl = min(sl, price - min_distance) if sl_dist < min_distance else sl
-            tp = max(tp, price + min_distance) if tp_dist < min_distance else tp
+            if sl_dist < min_distance:
+                sl = round(price - min_distance, digits)
+            if tp_dist < min_distance:
+                tp = round(price + min_distance, digits)
         else:
-            sl = max(sl, price + min_distance) if sl_dist < min_distance else sl
-            tp = min(tp, price - min_distance) if tp_dist < min_distance else tp
+            if sl_dist < min_distance:
+                sl = round(price + min_distance, digits)
+            if tp_dist < min_distance:
+                tp = round(price - min_distance, digits)
         return sl, tp
 
     # ─────────────────────────────────────────
@@ -489,6 +501,8 @@ class MT5Bridge:
                 logger.error("  ► Fix: Not enough free margin — reduce lot size or close open trades")
             elif error_code in (10014, 10013):
                 logger.error("  ► Fix: Invalid lot size — broker rejected the volume")
+            elif error_code == 10016:
+                logger.error("  ► Fix: SL/TP still inside broker's minimum stop distance — signal skipped")
             return None
 
         logger.info(f"✅ Trade PLACED: {direction} {lot} lots of {symbol} @ {price} | SL: {sl} | TP: {tp}")
@@ -579,3 +593,62 @@ class MT5Bridge:
         else:
             logger.error(f"Failed to close trade {ticket}. Error: {result.retcode if result else 'None'}")
             return False
+
+    # ─────────────────────────────────────────
+    #  MODIFY STOP-LOSS (breakeven / trailing)
+    # ─────────────────────────────────────────
+    def modify_sl(self, ticket: int, new_sl: float) -> bool:
+        """
+        Moves the stop-loss of an open trade without closing it.
+        Used by the breakeven trailing-stop logic.
+        Returns True on success.
+        """
+        positions = mt5.positions_get(ticket=ticket)
+        if not positions:
+            logger.error(f"modify_sl: position {ticket} not found")
+            return False
+        pos = positions[0]
+        request = {
+            "action":   mt5.TRADE_ACTION_SLTP,
+            "symbol":   pos.symbol,
+            "position": ticket,
+            "sl":       new_sl,
+            "tp":       pos.tp,
+        }
+        result = mt5.order_send(request)
+        if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+            logger.info(f"✅ SL moved to {new_sl:.5f} on ticket {ticket}")
+            return True
+        code = result.retcode if result else "None"
+        logger.error(f"modify_sl failed on {ticket}: retcode={code}")
+        return False
+
+    # ─────────────────────────────────────────
+    #  MODIFY TAKE-PROFIT (dynamic target adjustment)
+    # ─────────────────────────────────────────
+    def modify_tp(self, ticket: int, new_tp: float) -> bool:
+        """
+        Moves the take-profit of an open trade without closing it.
+        Used when AI confidence drops — tighten TP to make the target
+        easier to reach before the market turns further against us.
+        Returns True on success.
+        """
+        positions = mt5.positions_get(ticket=ticket)
+        if not positions:
+            logger.error(f"modify_tp: position {ticket} not found")
+            return False
+        pos = positions[0]
+        request = {
+            "action":   mt5.TRADE_ACTION_SLTP,
+            "symbol":   pos.symbol,
+            "position": ticket,
+            "sl":       pos.sl,
+            "tp":       new_tp,
+        }
+        result = mt5.order_send(request)
+        if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+            logger.info(f"✅ TP moved to {new_tp:.5f} on ticket {ticket}")
+            return True
+        code = result.retcode if result else "None"
+        logger.error(f"modify_tp failed on {ticket}: retcode={code}")
+        return False
