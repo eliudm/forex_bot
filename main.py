@@ -67,7 +67,8 @@ from config.compat import get_runtime_config
 import config.settings as settings
 from config.settings import (
     ACCOUNT_BALANCE, RISK_PER_TRADE_PCT, PRIMARY_TIMEFRAME,
-    LOOKBACK_CANDLES, RETRAIN_EVERY_DAYS, TELEGRAM_ENABLED
+    LOOKBACK_CANDLES, RETRAIN_EVERY_DAYS, TELEGRAM_ENABLED,
+    SYMBOL_RISK_TIERS, TIER_MULTIPLIERS,
 )
 
 RUNTIME_CONFIG = get_runtime_config()
@@ -361,6 +362,7 @@ class ForexAIBot:
             if os.path.exists(signal_file):
                 with open(signal_file) as f:
                     existing = json.load(f)
+            tier = SYMBOL_RISK_TIERS.get(symbol, "MEDIUM")
             existing[symbol] = {
                 "action":     signal.get("action", "WAIT"),
                 "confidence": signal.get("confidence", 0),
@@ -369,6 +371,8 @@ class ForexAIBot:
                 "tp":         signal.get("tp", 0),
                 "rr_ratio":   signal.get("rr_ratio", 0),
                 "timestamp":  signal.get("timestamp", ""),
+                "risk_tier":  tier,
+                "tier_mult":  TIER_MULTIPLIERS.get(tier, 1.0),
             }
             with open(signal_file, "w") as f:
                 json.dump(existing, f, indent=2)
@@ -453,15 +457,20 @@ class ForexAIBot:
                 logger.info(f"  {symbol}: Trade rejected by user.")
                 return
 
-        # Step 7: Calculate lot size
+        # Step 7: Calculate lot size with symbol risk-tier scaling
+        tier       = SYMBOL_RISK_TIERS.get(symbol, "MEDIUM")
+        tier_mult  = TIER_MULTIPLIERS.get(tier, 1.0)
+        scaled_risk = RISK_PER_TRADE_PCT * tier_mult
+        logger.info(f"  {symbol} risk tier: {tier} ({tier_mult}×) → {scaled_risk:.2%} of balance")
+
         lot = self.bridge.calculate_lot_size(
             symbol   = symbol,
             sl_pips  = signal['sl_pips'],
-            risk_pct = RISK_PER_TRADE_PCT,
+            risk_pct = scaled_risk,
             balance  = account['balance']
         )
 
-        # Apply loss-detector lot multiplier
+        # Apply loss-detector lot multiplier on top of tier scaling
         lot = round(lot * adj["lot_multiplier"], 2)
         lot = max(lot, 0.01)
 
@@ -489,6 +498,220 @@ class ForexAIBot:
         else:
             logger.error(f"  ❌ Trade failed for {symbol}")
 
+
+    def _manage_open_trades(self):
+        """
+        AI-driven management of every currently open position each scan cycle.
+
+        Behaviours (in order of priority):
+        1. Signal reversal exit — AI opposes open direction at >= 65 % confidence.
+        2. Peak-profit exit — profit >= 2R and AI sees reversal at >= 50 % confidence
+           OR AI output is WAIT (momentum exhausted); then close to lock gains and
+           immediately re-scan the symbol for a fresh entry.
+        3. Breakeven trailing stop — once profit >= 1R, move SL to entry so the
+           trade can no longer turn into a loss.
+        """
+        REVERSAL_CONF  = 0.65   # hard reversal exit threshold
+        PEAK_CONF      = 0.50   # softer threshold used when already at 2R profit
+        PEAK_R_MULT    = 2.0    # close at 2R profit if AI hints at reversal/exhaustion
+        LOW_CONF       = 0.40   # tighten TP when AI conviction fades (losing trade)
+        COLLAPSE_CONF  = 0.30   # close immediately when AI collapses + trade > -1R loss
+
+        positions = self.bridge.get_open_positions()
+        if not positions:
+            return
+
+        # symbols to re-scan for fresh entry after a peak-profit close
+        reentry_symbols: list = []
+
+        for pos in positions:
+            symbol    = pos["symbol"]
+            ticket    = pos["ticket"]
+            direction = pos["direction"]   # "BUY" or "SELL"
+            entry     = pos["open_price"]
+            sl        = pos["sl"]
+            tp        = pos.get("tp", 0)
+            profit    = pos["profit"]
+
+            # Compute R-distance from tracker (most accurate source)
+            tracked        = self.tracker.trades.get(str(ticket), {})
+            original_sl    = tracked.get("sl", sl)
+            original_entry = tracked.get("entry", entry)
+            r_distance     = abs(original_entry - original_sl) if (original_sl and original_entry) else 0
+
+            # ── Fetch fresh AI signal once per position ───────────
+            engine     = self.ai_engines.get(symbol)
+            ai_action  = "WAIT"
+            ai_conf    = 0.0
+            df_cached  = None
+            if engine and engine.is_trained:
+                try:
+                    df_cached = self.bridge.get_candles(symbol, PRIMARY_TIMEFRAME, LOOKBACK_CANDLES)
+                    if df_cached is not None and len(df_cached) >= 50:
+                        df_cached = self.indicators.add_all(df_cached)
+                        raw = engine.predict(df_cached, min_confidence=PEAK_CONF)
+                        ai_action = raw.get("action", "WAIT")
+                        ai_conf   = raw.get("confidence", 0)
+                except Exception as e:
+                    logger.debug(f"[AI-MANAGE] Signal fetch error for {symbol}: {e}")
+
+            flip = (direction == "BUY"  and ai_action == "SELL") or \
+                   (direction == "SELL" and ai_action == "BUY")
+
+            # ── 1. SIGNAL REVERSAL EXIT (strong flip, >= 65 %) ───
+            if flip and ai_conf >= REVERSAL_CONF:
+                logger.info(
+                    f"[AI-MANAGE] Reversal exit {symbol} #{ticket}: "
+                    f"was {direction}, AI now {ai_action} @ {ai_conf:.0%}"
+                )
+                closed = self.bridge.close_trade(ticket)
+                if closed:
+                    self.tracker.record_close(ticket=ticket, exit_price=0, profit=profit)
+                    self.on_trade_closed(symbol, profit)
+                    if alerter:
+                        alerter.send(
+                            f"🔄 Reversal Exit\n{symbol} {direction} #{ticket}\n"
+                            f"AI flipped to {ai_action} ({ai_conf:.0%})\n"
+                            f"P&L: ${profit:+.2f}"
+                        )
+                    # Immediately look for a new trade in the flipped direction
+                    if symbol in self.ai_engines:
+                        reentry_symbols.append(symbol)
+                continue   # position closed — skip remaining checks
+
+            # ── CURRENT PRICE & PRICE-BASED R-MULTIPLE ───────────
+            current_price = None
+            try:
+                p_info = self.bridge.get_price(symbol)
+                if p_info:
+                    current_price = p_info["bid"] if direction == "BUY" else p_info["ask"]
+            except Exception:
+                pass
+
+            r_multiple_price = 0.0
+            if r_distance > 0 and current_price:
+                if direction == "BUY":
+                    r_multiple_price = (current_price - original_entry) / r_distance
+                else:
+                    r_multiple_price = (original_entry - current_price) / r_distance
+
+            # ── 2. CONFIDENCE COLLAPSE EXIT ──────────────────────
+            # AI conviction fell below 30% AND trade is > 1R in the red.
+            # No point waiting — the AI has essentially given up on this setup.
+            if ai_conf < COLLAPSE_CONF and r_multiple_price < -1.0:
+                logger.info(
+                    f"[AI-MANAGE] Confidence collapse exit {symbol} #{ticket}: "
+                    f"AI conf {ai_conf:.0%} (< {COLLAPSE_CONF:.0%}), "
+                    f"R-mult {r_multiple_price:.2f} (< -1.0)"
+                )
+                closed = self.bridge.close_trade(ticket)
+                if closed:
+                    self.tracker.record_close(ticket=ticket, exit_price=0, profit=profit)
+                    self.on_trade_closed(symbol, profit)
+                    if alerter:
+                        alerter.send(
+                            f"⚠️ Confidence Collapse Exit\n{symbol} {direction} #{ticket}\n"
+                            f"AI conviction: {ai_conf:.0%} | Trade at {r_multiple_price:.1f}R\n"
+                            f"P&L: ${profit:+.2f}"
+                        )
+                continue   # always skip further checks after attempting close
+
+            # ── 3. PEAK-PROFIT EXIT (>= 2R and AI hints reversal/exhaustion) ──
+            if r_distance > 0 and profit >= (PEAK_R_MULT * r_distance):
+                same_direction = (direction == "BUY"  and ai_action == "BUY") or \
+                                 (direction == "SELL" and ai_action == "SELL")
+                if same_direction:
+                    # AI still agrees — trade is strong, let it keep running
+                    logger.info(
+                        f"[AI-MANAGE] {symbol} #{ticket} at {PEAK_R_MULT}R profit "
+                        f"(${profit:.2f}) — AI still {ai_action} ({ai_conf:.0%}), letting it run"
+                    )
+                    # fall through to breakeven stop (SL already at entry by now)
+
+                # Trigger if AI is WAIT (momentum fading) or soft-flip at 50 %+
+                peak_trigger = (not same_direction) and \
+                               ((ai_action == "WAIT") or (flip and ai_conf >= PEAK_CONF))
+                if peak_trigger:
+                    logger.info(
+                        f"[AI-MANAGE] Peak-profit exit {symbol} #{ticket}: "
+                        f"profit ${profit:.2f} >= {PEAK_R_MULT}R (${PEAK_R_MULT*r_distance:.2f}), "
+                        f"AI={ai_action} ({ai_conf:.0%})"
+                    )
+                    closed = self.bridge.close_trade(ticket)
+                    if closed:
+                        self.tracker.record_close(ticket=ticket, exit_price=0, profit=profit)
+                        self.on_trade_closed(symbol, profit)
+                        if alerter:
+                            alerter.send(
+                                f"💰 Peak-Profit Exit\n{symbol} {direction} #{ticket}\n"
+                                f"Locked ${profit:+.2f} at {PEAK_R_MULT}R\n"
+                                f"AI signal: {ai_action} ({ai_conf:.0%})"
+                            )
+                        # Queue re-entry scan — market may still have a valid setup
+                        if symbol in self.ai_engines:
+                            reentry_symbols.append(symbol)
+                    continue   # position closed
+
+            # ── 4. LOW-CONFIDENCE TP TIGHTENING ──────────────────
+            # When AI confidence falls below 40% on a losing trade, the
+            # original TP becomes increasingly unlikely. Pull the target
+            # in to 0.5R from current price so the trade can exit at a
+            # small profit instead of grinding to a bigger loss.
+            if (ai_conf < LOW_CONF and r_multiple_price < 0
+                    and current_price and r_distance > 0
+                    and hasattr(self.bridge, "modify_tp")):
+                target_dist = r_distance * 0.5   # 0.5R — achievable quick exit
+                already_close = (tp > 0 and abs(tp - current_price) <= target_dist * 1.5)
+                if not already_close:
+                    if direction == "BUY":
+                        new_tp = round(current_price + target_dist, 5)
+                    else:
+                        new_tp = round(current_price - target_dist, 5)
+                    if new_tp > 0:
+                        moved = self.bridge.modify_tp(ticket, new_tp)
+                        if moved:
+                            logger.info(
+                                f"[AI-MANAGE] TP tightened {symbol} #{ticket}: "
+                                f"AI conf {ai_conf:.0%}, new TP {new_tp:.5f} (was {tp})"
+                            )
+                            if alerter:
+                                alerter.send(
+                                    f"🎯 Target Tightened\n{symbol} {direction} #{ticket}\n"
+                                    f"AI conviction dropped to {ai_conf:.0%}\n"
+                                    f"TP moved to {new_tp} (+0.5R from now)"
+                                )
+
+            # ── 5. BREAKEVEN TRAILING STOP ───────────────────────
+            try:
+                if r_distance > 0 and profit >= r_distance:
+                    already_be = (direction == "BUY"  and sl >= original_entry) or \
+                                 (direction == "SELL" and sl <= original_entry and sl > 0)
+                    if not already_be:
+                        new_sl = round(original_entry, 5)
+                        logger.info(
+                            f"[AI-MANAGE] Breakeven {symbol} #{ticket}: "
+                            f"profit ${profit:.2f} >= 1R ${r_distance:.2f} → SL → {new_sl}"
+                        )
+                        if hasattr(self.bridge, "modify_sl"):
+                            moved = self.bridge.modify_sl(ticket, new_sl)
+                            if moved and str(ticket) in self.tracker.trades:
+                                self.tracker.trades[str(ticket)]["sl"] = new_sl
+                                self.tracker._save()
+                                if alerter:
+                                    alerter.send(
+                                        f"🛡️ Breakeven set\n{symbol} {direction} #{ticket}\n"
+                                        f"SL moved to entry {new_sl}"
+                                    )
+            except Exception as e:
+                logger.debug(f"[AI-MANAGE] Breakeven check error for {symbol} #{ticket}: {e}")
+
+        # ── RE-ENTRY after peak-profit / reversal closes ─────────
+        for symbol in reentry_symbols:
+            try:
+                logger.info(f"[AI-MANAGE] Re-scanning {symbol} for fresh entry after close")
+                self.process_symbol(symbol)
+            except Exception as e:
+                logger.debug(f"[AI-MANAGE] Re-entry scan error for {symbol}: {e}")
 
     def _check_control_file(self):
         """
@@ -653,6 +876,9 @@ class ForexAIBot:
                 # Advance the broker and settle any trades that closed
                 self._process_closed_trades()
 
+                # AI management: reversal exits + breakeven stops on open trades
+                self._manage_open_trades()
+
                 # Process each active symbol
                 for symbol in self.active_symbols:
                     self.process_symbol(symbol)
@@ -661,14 +887,29 @@ class ForexAIBot:
                 stats = self.risk_manager.get_daily_stats()
                 logger.info(f"Today: {stats['total_trades']} trades | Wins: {stats['wins']} | Losses: {stats['losses']} | P&L: ${stats['total_pnl']:.2f}")
 
+                # Write heartbeat so dashboard shows current scan time
+                try:
+                    import json as _json
+                    _hb = {"last_scan": datetime.now().isoformat(), "scan_count": scan_count}
+                    with open("logs/bot_heartbeat.json", "w") as _f:
+                        _json.dump(_hb, _f)
+                except Exception:
+                    pass
+
                 if max_scans and scan_count >= max_scans:
                     logger.info(f"BOT_MAX_SCANS={max_scans} reached. Stopping.")
                     self.running = False
                     break
 
-                # Wait before next scan
+                # Wait before next scan — sleep in 5-second chunks so a
+                # dashboard Stop signal is picked up within a few seconds
+                # rather than waiting the full scan interval.
                 logger.info(f"Next scan in {scan_interval} seconds...")
-                time.sleep(scan_interval)
+                for _ in range(scan_interval // 5):
+                    if not self.running:
+                        break
+                    time.sleep(5)
+                    self._check_control_file()  # check stop/start mid-sleep
 
             except KeyboardInterrupt:
                 logger.info("\n  Bot stopped by user.")
