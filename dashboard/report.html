@@ -95,7 +95,7 @@ async function load(days) {
   try {
     const r = await fetch(`/api/performance?days=${days}`);
     const d = await r.json();
-    if (d.error && d.total_trades === 0) {
+    if (d.error || !d.total_trades) {
       document.getElementById('content').innerHTML = `
         <div class="loading" style="color:var(--yellow)">
           No trades recorded yet.<br><br>
@@ -246,8 +246,9 @@ function render(d) {
     <div class="box"><div class="box-head" style="color:var(--red)">Worst Trade</div>
       <div style="padding:16px;font-family:var(--mono);font-size:.8rem;line-height:2">
         <div>Symbol: <span style="color:var(--text)">${d.worst_trade?.symbol||'—'}</span></div>
-        <div>Loss: <span style="color:var(--red)">${fmt(d.worst_trade?.profit||0)}</span></div>
+        <div>${(d.worst_trade?.profit||0)>=0?'Profit':'Loss'}: <span style="color:${(d.worst_trade?.profit||0)>=0?'var(--accent)':'var(--red)'}">${fmt(d.worst_trade?.profit||0)}</span></div>
         <div>Strategy: <span style="color:var(--text)">${d.worst_trade?.strategy||'—'}</span></div>
+        ${d.total_trades===1?'<div style="color:var(--muted);font-size:.7rem;margin-top:4px">Only 1 trade recorded — same as best</div>':''}
       </div>
     </div>
   </div>`;
