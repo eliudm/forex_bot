@@ -79,8 +79,8 @@ canvas{display:block;width:100%}
     <div class="box" style="margin-bottom:12px">
       <div class="bh">Market Signals <span id="scnt">Last scan: —</span></div>
       <table>
-        <thead><tr><th>Symbol</th><th>Signal</th><th>Confidence</th><th>Regime</th></tr></thead>
-        <tbody id="mkts"><tr><td colspan="4" style="text-align:center;color:#4b5675;padding:16px">Loading...</td></tr></tbody>
+        <thead><tr><th>Symbol</th><th>Signal</th><th>Confidence</th><th>Regime</th><th>Risk Tier</th><th>Position Size</th></tr></thead>
+        <tbody id="mkts"><tr><td colspan="6" style="text-align:center;color:#4b5675;padding:16px">Loading...</td></tr></tbody>
       </table>
     </div>
     <div class="box">
@@ -251,19 +251,33 @@ function refresh() {
     var syms = Object.keys(d);
     var tb = document.getElementById('mkts');
     if (!syms.length) {
-      tb.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#4b5675;padding:16px">No markets yet. Bot scanning...</td></tr>';
+      tb.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#4b5675;padding:16px">No markets yet. Bot scanning...</td></tr>';
       return;
     }
+    var tierCol = {LOW:'#00e5a0', MEDIUM:'#3b82f6', HIGH:'#fbbf24', EXTREME:'#ef4444'};
+    var tierBg  = {LOW:'rgba(0,229,160,.1)', MEDIUM:'rgba(59,130,246,.1)', HIGH:'rgba(251,191,36,.1)', EXTREME:'rgba(244,63,94,.1)'};
     var html = '';
     syms.forEach(function(sym) {
-      var s = d[sym] || {};
-      var act = (s.action || 'WAIT').toLowerCase();
+      var s    = d[sym] || {};
+      var act  = (s.action || 'WAIT').toLowerCase();
       var conf = parseFloat(s.confidence || 0);
+      var tier = s.risk_tier || 'MEDIUM';
+      var mult = s.tier_mult != null ? s.tier_mult : 1.0;
+      var tc   = tierCol[tier] || '#4b5675';
+      var tbg  = tierBg[tier]  || 'rgba(75,86,117,.1)';
+      var tierBadge = '<span style="background:'+tbg+';color:'+tc+';border-radius:4px;padding:1px 6px;font-size:.6rem;font-weight:700">'+tier+'</span>';
+      var multStr, multCol;
+      if      (mult >= 1.4) { multStr = mult+'× (bigger)';  multCol = '#00e5a0'; }
+      else if (mult >= 0.9) { multStr = 'Standard (1×)';    multCol = '#4b5675'; }
+      else if (mult >= 0.4) { multStr = mult+'× (reduced)'; multCol = '#fbbf24'; }
+      else                  { multStr = mult+'× (small)';   multCol = '#ef4444'; }
       html += '<tr>' +
         '<td style="font-weight:600">'+sym+'</td>' +
         '<td><span class="sig '+act+'">'+act.toUpperCase()+'</span></td>' +
         '<td>' + (conf>0 ? Math.round(conf*100)+'%' : '—') + '</td>' +
         '<td style="color:#4b5675;font-size:.72rem">'+(s.regime||'—')+'</td>' +
+        '<td>'+tierBadge+'</td>' +
+        '<td style="color:'+multCol+';font-size:.7rem;font-family:monospace">'+multStr+'</td>' +
         '</tr>';
     });
     tb.innerHTML = html;
@@ -413,6 +427,18 @@ function saveSetting(key, val) {
     });
 }
 
+function statusBadge(s, color) {
+  var c = {green:'#00e5a0', yellow:'#fbbf24', red:'#ef4444', blue:'#3b82f6'}[color] || '#4b5675';
+  var bg = {green:'rgba(0,229,160,.12)', yellow:'rgba(251,191,36,.12)', red:'rgba(244,63,94,.12)', blue:'rgba(59,130,246,.12)'}[color] || 'rgba(75,86,117,.12)';
+  return '<span style="background:'+bg+';color:'+c+';border-radius:5px;padding:2px 7px;font-size:.65rem;font-weight:700;letter-spacing:.5px">'+s+'</span>';
+}
+
+function progressBar(pct, color) {
+  var c = {green:'#00e5a0', yellow:'#fbbf24', red:'#ef4444', blue:'#3b82f6'}[color] || '#4b5675';
+  return '<div style="background:#1e2435;border-radius:3px;height:5px;width:80px;overflow:hidden">'
+    + '<div style="background:'+c+';height:100%;width:'+Math.min(pct,100)+'%;border-radius:3px;transition:width .4s"></div></div>';
+}
+
 function refreshPositions() {
   fetch('/api/positions').then(r=>r.json()).then(positions=>{
     if (!Array.isArray(positions)) return;
@@ -420,7 +446,7 @@ function refreshPositions() {
     var hdr   = document.getElementById('posPnl');
     var total = positions.reduce(function(s,p){ return s + (p.profit||0); }, 0);
     hdr.textContent = positions.length
-      ? '(' + positions.length + ' trades) Floating: '
+      ? '(' + positions.length + ' open) Floating: '
         + (total>=0?'+':'') + '$' + total.toFixed(2)
       : '(no open trades)';
     hdr.style.color = total >= 0 ? '#00e5a0' : '#ef4444';
@@ -430,26 +456,90 @@ function refreshPositions() {
     }
     var rows = positions.map(function(p) {
       var pnlCol = p.profit >= 0 ? '#00e5a0' : '#ef4444';
-      var dir    = p.direction === 'BUY'
-        ? '<span style="color:#00e5a0;font-weight:600">BUY</span>'
-        : '<span style="color:#ef4444;font-weight:600">SELL</span>';
-      return '<tr style="border-bottom:1px solid #1e2435">'
-        + '<td style="padding:8px 4px;font-weight:600">' + p.symbol + '</td>'
-        + '<td style="padding:8px 4px">' + dir + '</td>'
-        + '<td style="padding:8px 4px;font-family:monospace">' + p.lot + ' lot</td>'
-        + '<td style="padding:8px 4px;font-family:monospace">' + p.open_price + '</td>'
-        + '<td style="padding:8px 4px;font-family:monospace;color:' + pnlCol + ';font-weight:600">'
-          + (p.profit >= 0 ? '+' : '') + '$' + p.profit.toFixed(2) + '</td>'
-        + '<td style="padding:8px 4px;color:#4b5675;font-size:.7rem">' + p.open_time + '</td>'
-        + '<td style="padding:8px 4px"><button onclick="closePosition(' + p.ticket + ',\'' + p.symbol + '\')" '
-          + 'style="background:#1e2435;border:1px solid #ef4444;color:#ef4444;padding:3px 8px;border-radius:5px;cursor:pointer;font-size:.7rem">Close</button></td>'
+      var dir = p.direction === 'BUY'
+        ? '<span style="color:#00e5a0;font-weight:700;font-size:.75rem">▲ BUY</span>'
+        : '<span style="color:#ef4444;font-weight:700;font-size:.75rem">▼ SELL</span>';
+      var rm   = (p.r_multiple != null && isFinite(p.r_multiple)) ? p.r_multiple : null;
+      var rStr = rm != null ? (rm >= 0 ? '+' : '') + rm.toFixed(2) + 'R' : '—';
+      var rCol = rm == null ? '#4b5675' : rm >= 1 ? '#00e5a0' : rm >= 0 ? '#fbbf24' : '#ef4444';
+      var beTag  = p.breakeven_set
+        ? '<span style="color:#3b82f6;font-size:.6rem;margin-left:4px">BE</span>' : '';
+      var conf_val = (p.confidence != null && isFinite(p.confidence)) ? p.confidence : 0;
+      var confCol  = conf_val >= 70 ? '#00e5a0' : conf_val >= 55 ? '#fbbf24' : '#ef4444';
+      var prog     = (p.progress_pct  != null && isFinite(p.progress_pct))  ? p.progress_pct  : 0;
+      var slbuf    = (p.sl_buffer_pct != null && isFinite(p.sl_buffer_pct)) ? p.sl_buffer_pct : 0;
+      var status   = p.status       || '...';
+      var scolor   = p.status_color || 'yellow';
+      var strat    = p.strategy     || '—';
+      var held_str = p.held         || '—';
+
+      return '<tr style="border-bottom:1px solid #1a1e2a">'
+        // Symbol + strategy
+        + '<td style="padding:10px 6px">'
+          + '<div style="font-weight:700;font-size:.82rem">' + p.symbol + '</div>'
+          + '<div style="color:#4b5675;font-size:.65rem;margin-top:2px">' + strat + ' · ' + held_str + '</div>'
+        + '</td>'
+        // Direction
+        + '<td style="padding:10px 6px">' + dir + '</td>'
+        // Status badge
+        + '<td style="padding:10px 6px">' + statusBadge(status, scolor) + beTag + '</td>'
+        // P&L + R-multiple
+        + '<td style="padding:10px 6px">'
+          + '<div style="color:'+pnlCol+';font-weight:700;font-family:monospace">'+(p.profit>=0?'+':'')+'$'+p.profit.toFixed(2)+'</div>'
+          + '<div style="color:'+rCol+';font-size:.7rem;font-family:monospace">'+rStr+'</div>'
+        + '</td>'
+        // Progress to TP
+        + '<td style="padding:10px 6px">'
+          + '<div style="color:#4b5675;font-size:.6rem;margin-bottom:3px">TO TP: '+prog.toFixed(1)+'%</div>'
+          + progressBar(prog, scolor)
+        + '</td>'
+        // SL buffer
+        + '<td style="padding:10px 6px">'
+          + '<div style="color:#4b5675;font-size:.6rem;margin-bottom:3px">SL BUFFER: '+slbuf.toFixed(1)+'%</div>'
+          + progressBar(Math.min(slbuf,100), slbuf>40?'green':slbuf>15?'yellow':'red')
+        + '</td>'
+        // Expected TP profit
+        + (function(){
+            if (p.expected_tp_profit == null) return '<td style="padding:10px 6px;color:#4b5675;font-size:.75rem">—</td>';
+            var eCol = '#00e5a0';
+            var remStr = p.remaining_to_tp != null
+              ? '<div style="color:#4b5675;font-size:.6rem">+$'+p.remaining_to_tp.toFixed(2)+' more</div>' : '';
+            var rrStr = p.rr_ratio != null
+              ? '<div style="color:#4b5675;font-size:.6rem">RR '+p.rr_ratio+'</div>' : '';
+            return '<td style="padding:10px 6px">'
+              + '<div style="color:'+eCol+';font-weight:700;font-family:monospace">$'+p.expected_tp_profit.toFixed(2)+'</div>'
+              + remStr + rrStr
+              + '</td>';
+          })()
+        // Confidence
+        + '<td style="padding:10px 6px">'
+          + '<div style="color:#4b5675;font-size:.6rem">CONF</div>'
+          + '<div style="color:'+confCol+';font-weight:600;font-family:monospace;font-size:.8rem">'+(conf_val > 0 ? conf_val+'%' : '—')+'</div>'
+        + '</td>'
+        // Lot + entry
+        + '<td style="padding:10px 6px;font-size:.7rem;color:#4b5675;font-family:monospace">'
+          + p.lot + 'L<br>' + p.open_price
+        + '</td>'
+        // Close button
+        + '<td style="padding:10px 6px">'
+          + '<button onclick="closePosition('+p.ticket+',\''+p.symbol+'\')" '
+          + 'style="background:#1e2435;border:1px solid #ef4444;color:#ef4444;padding:4px 10px;border-radius:5px;cursor:pointer;font-size:.7rem">✕ Close</button>'
+        + '</td>'
         + '</tr>';
     }).join('');
-    el.innerHTML = '<table style="width:100%;border-collapse:collapse">'
-      + '<tr style="color:#4b5675;font-size:.65rem;letter-spacing:1px"><th style="text-align:left;padding:4px">SYMBOL</th>'
-      + '<th style="text-align:left">DIR</th><th style="text-align:left">SIZE</th>'
-      + '<th style="text-align:left">ENTRY</th><th style="text-align:left">P&L</th>'
-      + '<th style="text-align:left">OPENED</th><th></th></tr>'
+
+    el.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:.8rem">'
+      + '<tr style="color:#4b5675;font-size:.6rem;letter-spacing:1px;border-bottom:1px solid #1e2435">'
+      + '<th style="text-align:left;padding:6px">SYMBOL</th>'
+      + '<th style="text-align:left;padding:6px">DIR</th>'
+      + '<th style="text-align:left;padding:6px">STATUS</th>'
+      + '<th style="text-align:left;padding:6px">P&amp;L</th>'
+      + '<th style="text-align:left;padding:6px">TP PROGRESS</th>'
+      + '<th style="text-align:left;padding:6px">SL BUFFER</th>'
+      + '<th style="text-align:left;padding:6px">TARGET $</th>'
+      + '<th style="text-align:left;padding:6px">CONF</th>'
+      + '<th style="text-align:left;padding:6px">SIZE/ENTRY</th>'
+      + '<th></th></tr>'
       + rows + '</table>';
   }).catch(function(){ });
 }
