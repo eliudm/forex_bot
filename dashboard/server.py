@@ -61,6 +61,17 @@ def api_status():
         status = "OFFLINE"
         reason = "Bot not detected. Run start_bot.bat to start it."
 
+    # Use heartbeat timestamp (updated every scan) if available,
+    # fall back to state file saved_at (only updates on trade close)
+    heartbeat_file = os.path.join(LOG_DIR, "bot_heartbeat.json")
+    last_updated = state.get("saved_at", datetime.now().isoformat())
+    if os.path.exists(heartbeat_file):
+        try:
+            hb = json.load(open(heartbeat_file))
+            last_updated = hb.get("last_scan", last_updated)
+        except Exception:
+            pass
+
     return jsonify({
         "status":          status,
         "status_reason":   reason,
@@ -69,12 +80,22 @@ def api_status():
         "loss_streak":     state.get("loss_streak", 0),
         "win_streak":      state.get("win_streak",  0),
         "retrain_needed":  state.get("retrain_needed", False),
-        "saved_at":        state.get("saved_at", datetime.now().isoformat()),
+        "saved_at":        last_updated,
     })
 
 
 def _count_open_trades():
-    """Read open trade count from performance tracker."""
+    """Count open trades from live MT5 positions; fall back to tracker file."""
+    try:
+        import MetaTrader5 as mt5
+        if mt5.initialize():
+            positions = mt5.positions_get()
+            mt5.shutdown()
+            if positions is not None:
+                return len(positions)
+    except Exception:
+        pass
+    # Fallback: read from performance tracker file
     tracker_file = os.path.join(_ROOT, "logs", "performance_tracker.json")
     try:
         if os.path.exists(tracker_file):
@@ -105,10 +126,30 @@ def _read_mt5_balance():
 
 @app.route("/api/stats")
 def api_stats():
-    state  = read_state()
-    trades = state.get("trade_history", [])
-    today  = date.today().isoformat()
-    today_trades = [t for t in trades if t.get("time", "").startswith(today)]
+    state = read_state()
+    today = date.today().isoformat()
+
+    # Read closed trades from performance tracker (most accurate source —
+    # updated whenever a trade closes regardless of whether bot was running)
+    tracker_file = os.path.join(_ROOT, "logs", "performance_tracker.json")
+    today_trades = []
+    try:
+        if os.path.exists(tracker_file):
+            with open(tracker_file, encoding="utf-8") as f:
+                tdata = json.load(f)
+            history = tdata.get("history", [])
+            today_trades = [
+                t for t in history
+                if t.get("close_time", t.get("time", "")).startswith(today)
+            ]
+    except Exception:
+        pass
+
+    # Fallback to loss detector state if tracker is empty
+    if not today_trades:
+        fallback = state.get("trade_history", [])
+        today_trades = [t for t in fallback if t.get("time", "").startswith(today)]
+
     wins      = [t for t in today_trades if t.get("profit", 0) > 0]
     losses    = [t for t in today_trades if t.get("profit", 0) <= 0]
     total_pnl = sum(t.get("profit", 0) for t in today_trades)
@@ -232,32 +273,148 @@ def ctrl_mode():
     return jsonify({"ok": True, "mode": mode})
 
 
+def _trade_analytics(p, current_price, tracker_trades, mt5):
+    """Compute health metrics for one open MT5 position."""
+    direction  = "BUY" if p.type == 0 else "SELL"
+    entry      = p.price_open
+    sl         = p.sl
+    tp         = p.tp
+    profit     = p.profit
+
+    # Pull original SL from tracker for accurate R calculation
+    tracked     = tracker_trades.get(str(p.ticket), {})
+    orig_sl     = tracked.get("sl", sl)
+    orig_entry  = tracked.get("entry", entry)
+    r_distance  = abs(orig_entry - orig_sl) if orig_sl and orig_entry else 0
+
+    # R-multiple: how many R units is current profit worth
+    r_multiple = round(profit / r_distance, 2) if r_distance > 0 else 0
+
+    # Progress toward TP (0–100 %)
+    if tp and r_distance > 0:
+        tp_distance = abs(tp - orig_entry)
+        if direction == "BUY":
+            moved = current_price - orig_entry
+        else:
+            moved = orig_entry - current_price
+        progress_pct = round(min(max(moved / tp_distance * 100, 0), 100), 1)
+    else:
+        progress_pct = 0
+
+    # Distance remaining to SL as % of original SL distance
+    if sl and r_distance > 0:
+        if direction == "BUY":
+            to_sl = current_price - sl
+        else:
+            to_sl = sl - current_price
+        sl_buffer_pct = round(min(max(to_sl / r_distance * 100, 0), 200), 1)
+    else:
+        sl_buffer_pct = 100
+
+    # Is SL at breakeven (entry)?
+    be_set = (direction == "BUY"  and sl >= orig_entry * 0.9999) or \
+             (direction == "SELL" and sl > 0 and sl <= orig_entry * 1.0001)
+
+    # Health status
+    if be_set and profit > 0:
+        status = "PROTECTED"
+        status_color = "blue"
+    elif sl_buffer_pct <= 15:
+        status = "DANGER"
+        status_color = "red"
+    elif sl_buffer_pct <= 40:
+        status = "AT RISK"
+        status_color = "yellow"
+    elif profit > 0:
+        status = "IN CONTROL"
+        status_color = "green"
+    else:
+        status = "WATCH"
+        status_color = "yellow"
+
+    # Hold time
+    open_dt   = datetime.fromtimestamp(p.time)
+    held_min  = int((datetime.now() - open_dt).total_seconds() // 60)
+    held_str  = f"{held_min // 60}h {held_min % 60}m" if held_min >= 60 else f"{held_min}m"
+
+    # Expected profit at TP — use MT5's own calculator for exact $ value
+    expected_tp_profit = None
+    risk_amount        = None
+    rr_ratio           = None
+    try:
+        order_type = mt5.ORDER_TYPE_BUY if direction == "BUY" else mt5.ORDER_TYPE_SELL
+        if tp:
+            expected_tp_profit = mt5.order_calc_profit(order_type, p.symbol, p.volume, entry, tp)
+            if expected_tp_profit is not None:
+                expected_tp_profit = round(expected_tp_profit, 2)
+        if orig_sl:
+            risk_amount = mt5.order_calc_profit(order_type, p.symbol, p.volume, entry, orig_sl)
+            if risk_amount is not None:
+                risk_amount = round(abs(risk_amount), 2)
+        if expected_tp_profit is not None and risk_amount and risk_amount > 0:
+            rr_ratio = round(expected_tp_profit / risk_amount, 2)
+    except Exception:
+        pass
+
+    # Remaining profit needed to reach TP
+    remaining_to_tp = round(expected_tp_profit - profit, 2) if expected_tp_profit is not None else None
+
+    return {
+        "status":             status,
+        "status_color":       status_color,
+        "r_multiple":         r_multiple,
+        "progress_pct":       progress_pct,
+        "sl_buffer_pct":      sl_buffer_pct,
+        "breakeven_set":      be_set,
+        "held":               held_str,
+        "confidence":         round(tracked.get("confidence", 0) * 100, 0),
+        "strategy":           tracked.get("strategy", "—"),
+        "expected_tp_profit": expected_tp_profit,
+        "risk_amount":        risk_amount,
+        "rr_ratio":           rr_ratio,
+        "remaining_to_tp":    remaining_to_tp,
+    }
+
+
 @app.route("/api/positions")
 def api_positions():
-    """Live open positions with floating P&L from MT5."""
+    """Live open positions with floating P&L and trade analytics from MT5."""
     try:
         import MetaTrader5 as mt5
         if not mt5.initialize():
             return jsonify([])
+
+        # Load tracker for R-distance and metadata
+        tracker_trades = {}
+        tracker_file = os.path.join(_ROOT, "logs", "performance_tracker.json")
+        try:
+            if os.path.exists(tracker_file):
+                with open(tracker_file, encoding="utf-8") as f:
+                    tracker_trades = json.load(f).get("open_trades", {})
+        except Exception:
+            pass
+
         positions = mt5.positions_get()
         result = []
         if positions:
             for p in positions:
-                tick = mt5.symbol_info_tick(p.symbol)
+                tick    = mt5.symbol_info_tick(p.symbol)
                 current = tick.bid if p.type == 1 else tick.ask if tick else p.price_open
+                analytics = _trade_analytics(p, current, tracker_trades, mt5)
                 result.append({
-                    "ticket":     p.ticket,
-                    "symbol":     p.symbol,
-                    "direction":  "BUY" if p.type == 0 else "SELL",
-                    "lot":        p.volume,
-                    "open_price": p.price_open,
-                    "current":    round(current, 5) if current else 0,
-                    "sl":         p.sl,
-                    "tp":         p.tp,
-                    "profit":     round(p.profit, 2),
-                    "swap":       round(p.swap, 2),
-                    "open_time":  datetime.fromtimestamp(p.time).strftime("%H:%M %d/%m"),
-                    "magic":      p.magic,
+                    "ticket":      p.ticket,
+                    "symbol":      p.symbol,
+                    "direction":   "BUY" if p.type == 0 else "SELL",
+                    "lot":         p.volume,
+                    "open_price":  p.price_open,
+                    "current":     round(current, 5) if current else 0,
+                    "sl":          p.sl,
+                    "tp":          p.tp,
+                    "profit":      round(p.profit, 2),
+                    "swap":        round(p.swap, 2),
+                    "open_time":   datetime.fromtimestamp(p.time).strftime("%H:%M %d/%m"),
+                    "magic":       p.magic,
+                    **analytics,
                 })
         mt5.shutdown()
         return jsonify(result)
@@ -358,6 +515,24 @@ def ctrl_status():
     return jsonify({"running": True, "mode": "FULL_AUTO"})
 
 
+def _native(obj):
+    """Recursively convert numpy/non-serializable types to plain Python."""
+    import numpy as np
+    if isinstance(obj, dict):
+        return {k: _native(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_native(v) for v in obj]
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    if isinstance(obj, (np.floating,)):
+        return float(obj)
+    if isinstance(obj, (np.bool_,)):
+        return bool(obj)
+    if isinstance(obj, float) and (obj != obj or obj == float('inf') or obj == float('-inf')):
+        return 0.0  # NaN / inf → 0
+    return obj
+
+
 @app.route("/api/performance")
 def api_performance():
     import sys
@@ -367,7 +542,7 @@ def api_performance():
         tracker = PerformanceTracker()
         days    = int(request.args.get("days", 30))
         report  = tracker.get_report(days=days)
-        return jsonify(report)
+        return jsonify(_native(report))
     except Exception as e:
         return jsonify({"error": str(e), "total_trades": 0})
 
