@@ -101,8 +101,14 @@ def ask_which_markets() -> list:
     """
     env_markets = os.environ.get("BOT_MARKETS")
     if env_markets:
-        selected = [s.strip() for s in env_markets.split(",") if s.strip()]
-        logger.info(f"BOT_MARKETS set — skipping menu. Markets: {', '.join(selected)}")
+        # BOT_MARKETS=ALL → auto-select every enabled market from settings
+        if env_markets.strip().upper() == "ALL":
+            from config.settings import MARKETS
+            selected = [sym for sym, enabled in MARKETS.items() if enabled]
+            logger.info(f"BOT_MARKETS=ALL — auto-selecting {len(selected)} enabled markets")
+        else:
+            selected = [s.strip() for s in env_markets.split(",") if s.strip()]
+            logger.info(f"BOT_MARKETS set — skipping menu. Markets: {', '.join(selected)}")
         return selected
 
     all_markets = {
