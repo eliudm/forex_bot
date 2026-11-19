@@ -94,7 +94,7 @@ MARKETS = {
 # ─────────────────────────────────────────────
 ACCOUNT_BALANCE       = 10000   # Your balance in USD
 RISK_PER_TRADE_PCT    = 0.020   # Base risk per trade (scaled per symbol tier below)
-MAX_OPEN_TRADES       = 10      # Max simultaneous trades
+MAX_OPEN_TRADES       = 20      # Max simultaneous trades
 DAILY_LOSS_LIMIT_PCT  = 0.03    # Stop if -3% in one day
 MIN_REWARD_RISK_RATIO = 2.0     # Minimum 2:1 reward/risk
 
