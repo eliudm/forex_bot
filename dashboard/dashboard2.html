@@ -106,7 +106,7 @@ canvas{display:block;width:100%}
       <div style="font-weight:600;font-size:.88rem;margin-bottom:10px">Bot Controls</div>
       <div style="font-size:.62rem;color:#4b5675;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">Mode</div>
       <div class="modes">
-        <div class="mode on" id="bSemi" onclick="setMode('SEMI_AUTO')"><div class="mt">Semi-Auto</div><div class="ms">You approve</div></div>
+        <div class="mode" id="bSemi" onclick="setMode('SEMI_AUTO')"><div class="mt">Semi-Auto</div><div class="ms">You approve</div></div>
         <div class="mode" id="bFull" onclick="setMode('FULL_AUTO')"><div class="mt">Full Auto</div><div class="ms">Bot trades</div></div>
       </div>
       <button class="btn bs" id="btnStart" onclick="doStart()">START BOT</button>
@@ -391,11 +391,21 @@ function doStop() {
   log('Stop signal sent to bot', 'wn');
   setBotState(false);
 }
-function setMode(m) {
+function applyMode(m) {
   document.getElementById('bSemi').className = 'mode'+(m==='SEMI_AUTO'?' on':'');
   document.getElementById('bFull').className = 'mode'+(m==='FULL_AUTO'?' on':'');
+}
+function setMode(m) {
+  applyMode(m);
   post('/api/control/mode', {mode:m});
   msg('Mode: '+m, '#00e5a0');
+}
+function loadControlStatus() {
+  api('/api/control/status', function(err, d) {
+    if (err || !d) return;
+    applyMode(d.mode || 'FULL_AUTO');
+    if (typeof d.running === 'boolean') setBotState(d.running);
+  });
 }
 function msg(t, c) {
   var e = document.getElementById('cm');
@@ -564,6 +574,7 @@ function closePosition(ticket, symbol) {
 log('Dashboard loaded. Connecting to bot...', 'in');
 refresh();
 loadSettings();
+loadControlStatus();
 refreshPositions();
 setInterval(refresh, 10000);
 setInterval(refreshPositions, 5000);
